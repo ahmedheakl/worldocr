@@ -17,8 +17,7 @@ from typing import Optional, Tuple, Any, List, Dict
 
 from docling_core.types.doc import (
     CodeItem,
-    DoclingDocument,
-    DoclingDocument,
+    DoclingDocument
 )
 from docling_core.types.doc.labels import CodeLanguageLabel, DocItemLabel
 
@@ -27,6 +26,8 @@ from collections import defaultdict
 from vllm import LLM, SamplingParams
 
 from transformers import AutoProcessor
+from PIL import Image
+from tqdm import tqdm
 
 
 import fitz  # PyMuPDF
@@ -41,16 +42,16 @@ def get_available_gpu_ids_from_env() -> List[int]:
 
 
 INPUT_PATH = Path(
-    "/gpfs/ZuFS1/proj/deep-search/mao/datasets/code_equations_enriched_docs/"
+    "data/docling_json_out_validated"
 )
 OUTPUT_PATH = Path(
-    "/gpfs/ZuFS1/proj/deep-search/mao/datasets/code_equations_enriched_docs_granite_docling_test/"
+    "data/enriched_docs"
 )
 
 
 def get_code_formula_model():
     llm = LLM(
-        model="https://huggingface.co/ds4sd/CodeFormulaV2",
+        model="ds4sd/CodeFormulaV2",
         limit_mm_per_prompt={"image": 1},
         seed=42,
     )
@@ -61,9 +62,7 @@ def get_code_formula_model():
         skip_special_tokens=False,
     )
 
-    processor = AutoProcessor.from_pretrained(
-        "https://huggingface.co/ds4sd/CodeFormulaV2"
-    )
+    processor = AutoProcessor.from_pretrained("ds4sd/CodeFormulaV2")
 
     print("✅ Loaded CodeFormula model.")
 
@@ -158,20 +157,41 @@ def get_code_language_enum(value: Optional[str]) -> CodeLanguageLabel:
 
 def expand_bbox(bbox, expansion_factor=0.05):
     width = bbox.r - bbox.l
-    height = bbox.t - bbox.b
+    height = bbox.b - bbox.t
 
-    expanded_bbox = BoundingBox(
+    return BoundingBox(
         l=bbox.l - width * expansion_factor,
-        t=bbox.t + height * expansion_factor,
+        t=bbox.t - height * expansion_factor,
         r=bbox.r + width * expansion_factor,
-        b=bbox.b - height * expansion_factor,
+        b=bbox.b + height * expansion_factor,
         coord_origin=bbox.coord_origin,
     )
 
-    return expanded_bbox
+def get_images(items: Any, json_path: str):
+    json_name = os.path.basename(json_path)
+    image_path = os.path.join("data/docling_images_out", json_name.replace(".json", ".jpg"))
+    image = Image.open(image_path).convert("RGB")
+    W, H = image.size
+    images = []
+    labels = []
+    
+    for text_item in items:
+        label = text_item.label
+        bbox = text_item.prov[0].bbox
+        bbox = expand_bbox(bbox)
+        left  = max(0, int(bbox.l))
+        upper = max(0, int(bbox.t))   # top
+        right = min(W, int(bbox.r))
+        lower = min(H, int(bbox.b))   # bottom
+        cropped_image = image.crop((left, upper, right, lower))
+        images.append(cropped_image)
+        labels.append(str(label))
+        
+    return images, labels
+    
 
 
-def get_images(items: Any, scale: float, doc_backend):
+def get_images_pdf(items: Any, scale: float, doc_backend):
     images = []
     labels = []
     previous_page_no = None
@@ -205,17 +225,18 @@ def get_batch_of_images(folders):
     labels = []
     for folder in folders:
         try:
-            json_path = INPUT_PATH / folder / f"{folder}.json"
-            pdf_path = INPUT_PATH / folder / f"{folder}.pdf"
+            json_path = INPUT_PATH / folder
+            # pdf_path = INPUT_PATH / folder / f"{folder}.pdf"
 
-            backend = get_backend(pdf_path)
-            if not backend:
-                print(f"❌ Could not get backend on folder: {folder}", flush=True)
-                continue
+            # backend = get_backend(pdf_path)
+            # if not backend:
+            #     print(f"❌ Could not get backend on folder: {folder}", flush=True)
+            #     continue
 
             with open(json_path) as f:
                 doc_dict = json.load(f)
             doc = DoclingDocument.model_validate(doc_dict)
+            
 
             texts = [
                 t
@@ -224,11 +245,16 @@ def get_batch_of_images(folders):
             ]
             if not texts:
                 continue
-            images_doc, labels_doc = get_images(texts, scale=1.67, doc_backend=backend)
+            # images_doc, labels_doc = get_images(texts, scale=1.67, doc_backend=backend)
+            images_doc, labels_doc = get_images(texts, json_path)
             doc_ids.extend([folder] * len(images_doc))
             labels.extend(labels_doc)
             images.extend(images_doc)
-
+            # save all images
+            for i, img in enumerate(images_doc):
+                name = os.path.splitext(os.path.basename(json_path))[0]
+                img.save(OUTPUT_PATH / f"{name}_{i}.png")
+            print(f"📖 Processing document {folder} with {len(doc.texts)} text items", flush=True)
             if len(images) >= BATCH_SIZE:
                 yield images, labels, doc_ids
                 images = []
@@ -236,6 +262,8 @@ def get_batch_of_images(folders):
                 labels = []
         except Exception as e:
             print(f"❌ Error during processing {folder}, {e}", flush=True)
+            import traceback
+            traceback.print_exc()
             continue
     
     if len(images) > 0:
@@ -283,9 +311,9 @@ def update_docs(model_outputs, doc_ids):
     model_outputs = sanitize(model_outputs)
     d = partition_by_id(model_outputs, doc_ids)
     for folder, els in d.items():
-        json_path = INPUT_PATH / folder / f"{folder}.json"
-        pdf_path = INPUT_PATH / folder / f"{folder}.pdf"
-        enriched_js = OUTPUT_PATH / folder / f"{folder}.json"
+        json_path = INPUT_PATH / folder
+        # pdf_path = INPUT_PATH / folder / f"{folder}.pdf"
+        enriched_js = OUTPUT_PATH / folder
 
         try:
             # ----- load doc ----------------------------------------------------------
@@ -299,7 +327,7 @@ def update_docs(model_outputs, doc_ids):
                 for t in doc.texts
                 if t.label == DocItemLabel.CODE or t.label == DocItemLabel.FORMULA
             ]
-            os.makedirs(OUTPUT_PATH / folder, exist_ok=True)
+            # os.makedirs(OUTPUT_PATH / folder, exist_ok=True)
 
             assert len(els) == len(texts)
             for t, o in zip(texts, els):
@@ -319,14 +347,17 @@ def update_docs(model_outputs, doc_ids):
             doctags = [f"<doctag>{dt.strip()}\n</doctag>" for dt in doctags]
 
             for page_idx, doctag in enumerate(doctags, start=1):
-                with open(OUTPUT_PATH / folder / f"dt_{page_idx}.dt", "w") as fp:
+                name = os.path.basename(json_path).replace(".json", "")
+                with open(OUTPUT_PATH / f"{name}_dt_{page_idx}.dt", "w") as fp:
                     fp.write(doctag)
 
             # save pdf as images
-            pdf_to_images(pdf_path, OUTPUT_PATH / folder)
+            # pdf_to_images(pdf_path, OUTPUT_PATH / folder)
             print(f"✅ Document {folder} done", flush=True)
         except Exception as e:
             print(f"❌ Could not update folder: {folder}, {e}", flush=True)
+            import traceback    
+            traceback.print_exc()
             continue
 
 
@@ -395,7 +426,7 @@ def gpu_worker(
     model, processor, sampling_params = get_code_formula_model()
     code_prompt = get_prompt("<code>", processor)
     formula_prompt = get_prompt("<formula>", processor)
-
+    
     while True:
         t0 = time.time()
         batch = batch_q.get()
@@ -404,7 +435,7 @@ def gpu_worker(
             result_q.put(SENTINEL)  # pass downstream
             break
         wait_time = t1 - t0
-
+        print(f"🧑‍🚀 GPU worker {local_rank} on GPU {global_gpu_id} ready", flush=True)
         preds = []
         images, labels, doc_ids = batch
         for i in range(0, len(images), BATCH_SIZE):

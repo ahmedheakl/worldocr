@@ -11,12 +11,13 @@ from io import BytesIO
 # =========================
 # Config
 # =========================
-PARQUET_PATH = "benchmark_100_per_lang_v2.parquet"
+ROOT = "data"
+PARQUET_PATH = f"{ROOT}/benchmark_100_per_lang_v2.parquet"
 DOCTAG_COL   = "doctag_html"
 IMAGE_COL    = "image"
-OUT_DIR      = "docling_json_out"
-OUT_DIR_IMAGE = "docling_images_out"
-OUT_DIR_DOCTAG = "docling_doctag_out"
+OUT_DIR      = f"{ROOT}/docling_json_out"
+OUT_DIR_IMAGE = f"{ROOT}/docling_images_out"
+OUT_DIR_DOCTAG = f"{ROOT}/docling_doctag_out"
 ADD_JSON_COLUMN = False
 
 
@@ -68,7 +69,7 @@ def extract_bbox_from_tag(tag: Tag) -> Optional[Dict[str, Any]]:
             "t": coords[1],
             "r": coords[2],
             "b": coords[3],
-            "coord_origin": "BOTTOMLEFT"
+            "coord_origin": "TOPLEFT"
         },
         "charspan": [0, len(text_of(tag))]
     }
@@ -500,7 +501,7 @@ def extract_headers_texts_misc(soup: BeautifulSoup, b: Builder):
         content = text_of(node)
         if content:
             bbox = extract_bbox_from_tag(node)
-            b.add_text("section_header", content, {"$ref": "#/body"}, level=0, bbox=bbox)
+            b.add_text("title", content, {"$ref": "#/body"}, bbox=bbox)
         mark_processed(node)
 
     # Header/Footer
@@ -526,17 +527,16 @@ def extract_headers_texts_misc(soup: BeautifulSoup, b: Builder):
         lines = [ln.strip() for ln in text_of(toc).split("\n") if ln.strip()]
         bbox = extract_bbox_from_tag(toc)
         tids = [b.add_text("text", ln, {"$ref": "#/body"}, bbox=bbox) for ln in lines]
-        b.add_group("toc", tids)
+        b.add_group("list", tids)
         mark_processed(toc)
 
     # Quote / Equation / Generic text
     for node in soup.find_all(["quote", "equation", "text"]):
         if already_processed(node): continue
-        label = "quote" if node.name == "quote" else ("equation" if node.name == "equation" else "text")
+        label = "formula" if node.name == "equation" else "text"
         content = text_of(node)
-        if content:
-            bbox = extract_bbox_from_tag(node)
-            b.add_text(label, content, {"$ref": "#/body"}, bbox=bbox)
+        bbox = extract_bbox_from_tag(node)
+        b.add_text(label, content, {"$ref": "#/body"}, bbox=bbox)
         mark_processed(node)
         
         
