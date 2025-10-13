@@ -2,34 +2,23 @@ import os, multiprocessing as mp
 import time
 import json
 from pathlib import Path
-
 from docling.datamodel.document import InputDocument, InputFormat
 from docling_ibm_models.document_figure_classifier_model.document_figure_classifier_predictor import (
     DocumentFigureClassifierPredictor,
 )
 from huggingface_hub import snapshot_download
-
-
 from docling_core.types.doc import BoundingBox
-
 import re
 from typing import Optional, Tuple, Any, List, Dict
-
 from docling_core.types.doc import (
     CodeItem,
     DoclingDocument
 )
 from docling_core.types.doc.labels import CodeLanguageLabel, DocItemLabel
-
 from collections import defaultdict
-
 from vllm import LLM, SamplingParams
-
 from transformers import AutoProcessor
 from PIL import Image
-from tqdm import tqdm
-
-
 import fitz  # PyMuPDF
 
 
@@ -55,17 +44,13 @@ def get_code_formula_model():
         limit_mm_per_prompt={"image": 1},
         seed=42,
     )
-
     sampling_params = SamplingParams(
         temperature=0.0,
         max_tokens=8192,
         skip_special_tokens=False,
     )
-
     processor = AutoProcessor.from_pretrained("ds4sd/CodeFormulaV2")
-
     print("✅ Loaded CodeFormula model.")
-
     return llm, processor, sampling_params
 
 
@@ -76,9 +61,7 @@ def get_document_picture_classifier(device_id) -> DocumentFigureClassifierPredic
         revision="v1.0.1",
     )
     download_path = Path(download_path)
-
     device = f"cuda:{device_id}"
-
     return DocumentFigureClassifierPredictor(
         artifacts_path=download_path, device=device
     )
@@ -86,7 +69,6 @@ def get_document_picture_classifier(device_id) -> DocumentFigureClassifierPredic
 
 def get_backend(p: Path):
     from docling.backend.pypdfium2_backend import PyPdfiumDocumentBackend
-
     in_doc = InputDocument(
         path_or_stream=p,
         filename="file.pdf",
@@ -124,12 +106,11 @@ def extract_code_language(input_string: str) -> Tuple[str, Optional[str]]:
     """
     pattern = r"^<_([^>]+)_>\s*(.*)"
     match = re.match(pattern, input_string, flags=re.DOTALL)
-    if match:
-        language = str(match.group(1))  # the captured programming language
-        remainder = str(match.group(2))  # everything after the <_language_>
-        return remainder, language
-    else:
-        return input_string, None
+    if not match: return input_string, None
+    language = str(match.group(1))  # the captured programming language
+    remainder = str(match.group(2))  # everything after the <_language_>
+    return remainder, language
+        
 
 
 def get_code_language_enum(value: Optional[str]) -> CodeLanguageLabel:
@@ -312,7 +293,6 @@ def update_docs(model_outputs, doc_ids):
     d = partition_by_id(model_outputs, doc_ids)
     for folder, els in d.items():
         json_path = INPUT_PATH / folder
-        # pdf_path = INPUT_PATH / folder / f"{folder}.pdf"
         enriched_js = OUTPUT_PATH / folder
 
         try:
@@ -327,8 +307,6 @@ def update_docs(model_outputs, doc_ids):
                 for t in doc.texts
                 if t.label == DocItemLabel.CODE or t.label == DocItemLabel.FORMULA
             ]
-            # os.makedirs(OUTPUT_PATH / folder, exist_ok=True)
-
             assert len(els) == len(texts)
             for t, o in zip(texts, els):
                 o, lang = extract_code_language(o)
@@ -350,9 +328,6 @@ def update_docs(model_outputs, doc_ids):
                 name = os.path.basename(json_path).replace(".json", "")
                 with open(OUTPUT_PATH / f"{name}_dt_{page_idx}.dt", "w") as fp:
                     fp.write(doctag)
-
-            # save pdf as images
-            # pdf_to_images(pdf_path, OUTPUT_PATH / folder)
             print(f"✅ Document {folder} done", flush=True)
         except Exception as e:
             print(f"❌ Could not update folder: {folder}, {e}", flush=True)
@@ -426,7 +401,6 @@ def gpu_worker(
     model, processor, sampling_params = get_code_formula_model()
     code_prompt = get_prompt("<code>", processor)
     formula_prompt = get_prompt("<formula>", processor)
-    
     while True:
         t0 = time.time()
         batch = batch_q.get()
