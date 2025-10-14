@@ -364,7 +364,8 @@ def extract_lists(soup: BeautifulSoup, b: Builder):
                 tidx = b.add_text("text", line, {"$ref": "#/body"}, bbox=bbox)
                 item_text_ids.append(tidx)
 
-        b.add_group("list", item_text_ids)
+        # CHANGEME: Currently disabled because it creates too many groups
+        # b.add_group("list", item_text_ids)
         mark_processed(lst)
 
 def extract_figures_and_captions(soup: BeautifulSoup, b: Builder):
@@ -632,7 +633,7 @@ def _compute_body_children_in_dom_order(soup: BeautifulSoup, b: Builder) -> List
                 _push_ref(b._text_ref(tid))
 
         elif node.name in {"title"} or level_from_header_tag(node.name or "") is not None:
-            for tid in _find_texts_by_bbox_and_labels(bbox, labels={"section_header"}):
+            for tid in _find_texts_by_bbox_and_labels(bbox, labels={"section_header", "title"}):
                 _push_ref(b._text_ref(tid))
 
         elif node.name in {"header"}:

@@ -43,6 +43,7 @@ def get_code_formula_model():
         model="ds4sd/CodeFormulaV2",
         limit_mm_per_prompt={"image": 1},
         seed=42,
+        gpu_memory_utilization=0.5
     )
     sampling_params = SamplingParams(
         temperature=0.0,
@@ -207,31 +208,26 @@ def get_batch_of_images(folders):
     for folder in folders:
         try:
             json_path = INPUT_PATH / folder
-            # pdf_path = INPUT_PATH / folder / f"{folder}.pdf"
-
-            # backend = get_backend(pdf_path)
-            # if not backend:
-            #     print(f"❌ Could not get backend on folder: {folder}", flush=True)
-            #     continue
-
             with open(json_path) as f:
                 doc_dict = json.load(f)
             doc = DoclingDocument.model_validate(doc_dict)
-            
-
             texts = [
                 t
                 for t in doc.texts
                 if t.label == DocItemLabel.CODE or t.label == DocItemLabel.FORMULA
             ]
-            if not texts:
+            pictures = [
+                t
+                for t in doc.pictures
+            ]
+            
+            if not texts and not pictures:
                 continue
-            # images_doc, labels_doc = get_images(texts, scale=1.67, doc_backend=backend)
-            images_doc, labels_doc = get_images(texts, json_path)
+            items = texts + pictures
+            images_doc, labels_doc = get_images(items, json_path)
             doc_ids.extend([folder] * len(images_doc))
             labels.extend(labels_doc)
             images.extend(images_doc)
-            # save all images
             for i, img in enumerate(images_doc):
                 name = os.path.splitext(os.path.basename(json_path))[0]
                 img.save(OUTPUT_PATH / f"{name}_{i}.png")
@@ -263,6 +259,9 @@ def sanitize(outputs):
     to_replace = ["<loc_0><loc_0><loc_500><loc_500>", "<formula>", "</formula>", "<code>", "</code>", "<|pad|>", "<end_of_utterance>"]
     sanitized_output = []
     for output in outputs:
+        if not isinstance(output, str): 
+            sanitized_output.append(output)
+            continue
         output = output.strip()
         for rpl in to_replace:
             output = output.replace(rpl, "")
@@ -307,8 +306,17 @@ def update_docs(model_outputs, doc_ids):
                 for t in doc.texts
                 if t.label == DocItemLabel.CODE or t.label == DocItemLabel.FORMULA
             ]
-            assert len(els) == len(texts)
-            for t, o in zip(texts, els):
+            pictures = [
+                t
+                for t in doc.pictures
+            ]
+            items = texts + pictures
+            assert len(els) == len(items)
+            for t, o in zip(items, els):
+                if isinstance(o, list):
+                    classes = [{"class_name": cls[0], "confidence": float(cls[1])} for cls in o]
+                    t.annotations.append({"kind": "classification", "provenance": "model:DocumentFigureClassifier", "predicted_classes": classes})
+                    continue
                 o, lang = extract_code_language(o)
                 if isinstance(t, CodeItem):
                     t.code_language = get_code_language_enum(lang)
@@ -354,7 +362,7 @@ def batch_producer(folders: list[str], batch_q: mp.Queue, device_count: int) -> 
     try:
         for images, labels, doc_ids in get_batch_of_images(folders):
             print(
-                f"🚜 Produced {len(images)} images for documents {set(doc_ids)}",
+                f"🚜 Produced {len(images)} images for documents",
                 flush=True,
             )
             batch_q.put((images, labels, doc_ids))
@@ -399,6 +407,7 @@ def gpu_worker(
     import torch
 
     model, processor, sampling_params = get_code_formula_model()
+    figure_model = get_document_picture_classifier(global_gpu_id)
     code_prompt = get_prompt("<code>", processor)
     formula_prompt = get_prompt("<formula>", processor)
     while True:
@@ -415,11 +424,28 @@ def gpu_worker(
         for i in range(0, len(images), BATCH_SIZE):
             image_batch = images[i : i + BATCH_SIZE]
             label_batch = labels[i : i + BATCH_SIZE]
-            doc_id_batch = doc_ids[i : i + BATCH_SIZE]
+            preds_batch = []
 
             prompt_map = {"code": code_prompt, "formula": formula_prompt}
-            prompts = [prompt_map.get(label, code_prompt) for label in label_batch]
-            preds_batch = predict(model, sampling_params, image_batch, prompts)
+            text_indices = [idx for idx, label in enumerate(label_batch) if label in prompt_map]
+            figures_indices = [idx for idx, label in enumerate(label_batch) if label in "picture"]
+            text_images = [image_batch[idx] for idx in text_indices]
+            text_prompts = [prompt_map[label] for idx, label in enumerate(label_batch) if idx in text_indices]
+            text_preds = predict(model, sampling_params, text_images, text_prompts)
+            
+            figures = [image_batch[idx] for idx in figures_indices]
+            figure_preds = figure_model.predict(figures)
+            figure_preds = [pred[:3] for pred in figure_preds]
+            
+            for idx in range(len(image_batch)):
+                if idx in text_indices:
+                    pred = text_preds[text_indices.index(idx)]
+                    preds_batch.append(pred)
+                elif idx in figures_indices:
+                    pred = figure_preds[figures_indices.index(idx)]
+                    preds_batch.append(pred)
+                else:
+                    raise ValueError(f"Unknown label {label_batch[idx]} at index {idx}")
             preds.extend(preds_batch)
 
         print(
