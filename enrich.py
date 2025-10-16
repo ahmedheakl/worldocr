@@ -14,7 +14,7 @@ from docling_core.types.doc import (
     CodeItem,
     DoclingDocument
 )
-from docling_core.types.doc.labels import CodeLanguageLabel, DocItemLabel
+from docling_core.types.doc.labels import CodeLanguageLabel, DocItemLabel, PictureClassificationLabel
 from collections import defaultdict
 from vllm import LLM, SamplingParams
 from transformers import AutoProcessor
@@ -31,10 +31,10 @@ def get_available_gpu_ids_from_env() -> List[int]:
 
 
 INPUT_PATH = Path(
-    "data/docling_json_out_validated"
+    "data/charts"
 )
 OUTPUT_PATH = Path(
-    "data/enriched_docs"
+    "data/enriched_docs_charts"
 )
 
 
@@ -43,7 +43,7 @@ def get_code_formula_model():
         model="ds4sd/CodeFormulaV2",
         limit_mm_per_prompt={"image": 1},
         seed=42,
-        gpu_memory_utilization=0.5
+        gpu_memory_utilization=0.3
     )
     sampling_params = SamplingParams(
         temperature=0.0,
@@ -52,6 +52,23 @@ def get_code_formula_model():
     )
     processor = AutoProcessor.from_pretrained("ds4sd/CodeFormulaV2")
     print("✅ Loaded CodeFormula model.")
+    return llm, processor, sampling_params
+
+def get_charts_annotation_model():
+    model_path = "ibm-granite/granite-vision-3.3-2b"
+    llm = LLM(
+        model=model_path,
+        limit_mm_per_prompt={"image": 1},
+        seed=42,
+        gpu_memory_utilization=0.4
+    )
+    sampling_params = SamplingParams(
+        temperature=0.0,
+        max_tokens=8192,
+        skip_special_tokens=False,
+    )
+    processor = AutoProcessor.from_pretrained(model_path)
+    print("✅ Loaded ChartsAnnotation model.")
     return llm, processor, sampling_params
 
 
@@ -408,6 +425,7 @@ def gpu_worker(
 
     model, processor, sampling_params = get_code_formula_model()
     figure_model = get_document_picture_classifier(global_gpu_id)
+    # chart_model = get_charts_annotation_model()
     code_prompt = get_prompt("<code>", processor)
     formula_prompt = get_prompt("<formula>", processor)
     while True:
@@ -426,7 +444,7 @@ def gpu_worker(
             label_batch = labels[i : i + BATCH_SIZE]
             preds_batch = []
 
-            prompt_map = {"code": code_prompt, "formula": formula_prompt}
+            prompt_map = {"code": code_prompt, "formula": formula_prompt, "chart": "Generate charts data in OTSL format"}
             text_indices = [idx for idx, label in enumerate(label_batch) if label in prompt_map]
             figures_indices = [idx for idx, label in enumerate(label_batch) if label in "picture"]
             text_images = [image_batch[idx] for idx in text_indices]
@@ -436,6 +454,22 @@ def gpu_worker(
             figures = [image_batch[idx] for idx in figures_indices]
             figure_preds = figure_model.predict(figures)
             figure_preds = [pred[:3] for pred in figure_preds]
+            
+            # for figure_idx in range(len(figure_preds)):
+            #     img = figures[figure_idx]
+            #     pred = figure_preds[figure_idx]
+            #     predicted_class = pred[0][0]
+            #     is_chart = predicted_class in [
+            #         PictureClassificationLabel.PIE_CHART,
+            #         PictureClassificationLabel.BAR_CHART,
+            #         PictureClassificationLabel.STACKED_BAR_CHART,
+            #         PictureClassificationLabel.LINE_CHART,
+            #         PictureClassificationLabel.FLOW_CHART,
+            #         PictureClassificationLabel.SCATTER_CHART,
+            #         PictureClassificationLabel.HEATMAP,
+            #     ]
+            #     if not is_chart: continue
+            #     chart_pred = chart_model.predict([img])
             
             for idx in range(len(image_batch)):
                 if idx in text_indices:
