@@ -126,11 +126,12 @@ class End2EndDataset():
         matched = [(item['gt_position'], item['pred_position']) for item in order_match_s if (item['gt_position'] != [""] and item['pred_position'] != "")]
         gt_idx_all = [item['gt_position'] for item in order_match_s if (item['gt_position'] != [""])]
         read_order_pred = [i[0] for i in sorted(matched, key=lambda x: x[1])]  # Sort by pred idx to get Pred ordered GT_idx
-        read_order_gt = sum(gt_idx_all, []) # Convert to one-dimensional list
+        try: read_order_gt = sum(gt_idx_all, []) # Convert to one-dimensional list
+        except: read_order_gt = []
         read_order_gt = [x for x in read_order_gt if x]  # For truncated merges, some discarded classes may be merged in, remove them when calculating edit distance
         gt = sorted(read_order_gt) # Sort by all GT idx to get GT ordered GT_idx
-        pred = sum(read_order_pred, [])
-        pred = [x for x in pred if x]
+        try: pred = sum(read_order_pred, [])
+        except: pred = [x for x in pred if x]
         if len(pred) > 0 or len(gt) > 0:
             edit = Levenshtein.distance(gt, pred)/ max(len(pred), len(gt))
             return {
