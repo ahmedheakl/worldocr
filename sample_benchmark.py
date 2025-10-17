@@ -2,13 +2,21 @@ import pandas as pd
 import numpy as np
 from glob import glob
 from tqdm import tqdm
+from bs4 import BeautifulSoup
+from PIL import Image
+import re
+import os
+import json
+import io
 
 # --------------------------------------------
 # Step 1: Load and concatenate all parquet files
 # --------------------------------------------
-files = glob("data/train/*.parquet")
+files = glob("data/train/*.parquet")[-10:]
 all_dfs = [pd.read_parquet(f) for f in tqdm(files)]
 df = pd.concat(all_dfs, ignore_index=True)
+filter_langs = ['en']
+del all_dfs
 
 vital_tags = {
     'equation': 10,
@@ -111,27 +119,18 @@ def get_score(doctag_otsl: str):
         score += cnt * s
     return score
 
-
-# must have these columns: 'language' and 'difficulty_score'
 assert {'language', 'difficulty_score'}.issubset(df.columns), "Missing columns!"
 
 # --------------------------------------------
 # Step 2: Function to sample 100 examples per language
 # --------------------------------------------
 def sample_normal_distribution(group: pd.DataFrame, n_samples: int = 100):
-    # Sort by difficulty
     group = group.sort_values('difficulty_score').reset_index(drop=True)
-    
-    # Compute percentiles (approximate normal coverage)
     percentiles = np.linspace(0, 100, len(group))
     group['percentile'] = percentiles
-
-    # Ideal percentiles for normal-like shape (more from middle)
-    # 5 bins (tails smaller, center denser)
     target_bins = [0, 10, 30, 70, 90, 100]
     bin_weights = np.array([0.1, 0.2, 0.4, 0.2, 0.1])  # approximate bell shape
     bin_counts = np.round(bin_weights * n_samples).astype(int)
-
     sampled = []
     for (low, high), count in zip(zip(target_bins[:-1], target_bins[1:]), bin_counts):
         candidates = group[(group['percentile'] >= low) & (group['percentile'] < high)]
@@ -145,12 +144,199 @@ def sample_normal_distribution(group: pd.DataFrame, n_samples: int = 100):
 # --------------------------------------------
 df['difficulty_score'] = df['doctag_otsl'].apply(get_score)
 benchmark_samples = df.groupby('language', group_keys=False).apply(sample_normal_distribution)
+del df
 
-# --------------------------------------------
-# Step 4: Save the benchmark
-# --------------------------------------------
 benchmark_samples = benchmark_samples.drop(columns=['percentile'], errors='ignore')
-benchmark_samples.to_parquet("data/benchmark_100_per_lang_v3.parquet")
-
 print("✅ Benchmark created with", len(benchmark_samples), "samples across",
       benchmark_samples['language'].nunique(), "languages.")
+
+
+# --------------------------------------------
+# Step 4: Convert to OmniDocBench format and save
+# --------------------------------------------
+
+def extract_poly(text):
+    """Extract bounding box from <loc_*> tags and return polygon with 4 corners."""
+    coords = re.findall(r"<loc_(\d+)>", text)
+    nums = [int(c) for c in coords]
+    if len(nums) == 4:
+        x0, y0, x1, y1 = nums
+        return [x0, y0, x1, y0, x1, y1, x0, y1]  # expand bbox to polygon
+    if len(nums) == 8:
+        return nums  # already polygon
+    return None
+
+
+def clean_text(text):
+    """Remove <loc_*> tags and trim whitespace."""
+    return re.sub(r"<loc_\d+>", "", text).strip()
+
+def get_table(text):
+    soup = BeautifulSoup(text, "html.parser")
+    tables = soup.find_all("table")
+    if not tables:
+        return ""
+    # The innermost/actual table is usually the last one
+    return str(tables[-1])
+
+def parse_doctag(html_str, start_order=0, start_id=0, language="unknown"):
+    """
+    Parse <doctag> markup into OmniDocBench layout_dets entries.
+    Uses BeautifulSoup to properly handle multiple/nested tags.
+    """
+    layout_dets = []
+    order = start_order
+    anno_id = start_id
+
+    # Parse doctag XML
+    soup = BeautifulSoup(html_str, "html.parser")
+
+    for element in soup.find_all(["text", "list", "table",
+                                  "section_header_level_1",
+                                  "section_header_level_2",
+                                  "section_header_level_3"]):
+        raw = str(element)
+        poly = extract_poly(raw)
+        if poly is None: continue
+        inner = clean_text(element.get_text())
+
+        if element.name.startswith("section_header_level"):
+            category = "section_header"
+        elif element.name == "list":
+            category = "list_item"
+        elif element.name == "text":
+            category = "text_block"
+        elif element.name == "table":
+            category = "table"
+        else:
+            category = "text_block"
+
+        text = inner if category not in ["table"] else ""
+        html = get_table(raw) if category == "table" else ""
+        block = {
+            "category_type": category,
+            "poly": poly,
+            "ignore": False,
+            "order": order,
+            "anno_id": anno_id,
+            "attribute": {
+                "text_language": "text_english",
+                "text_background": "white",
+                "text_rotate": "normal"
+            },
+            "line_with_spans": [],
+            "merge_list": []
+        }
+        if text:
+            block["text"] = text
+        if html:
+            block["html"] = html
+
+        layout_dets.append(block)
+        order += 1
+        anno_id += 1
+
+    return layout_dets, order, anno_id
+
+def convert_page(page_number, img_size, img_path, html_doc, language):
+    width, height = img_size
+
+    layout_dets = []
+    order = 0
+    anno_id = 0
+
+    if html_doc.strip():
+        dets, order, anno_id = parse_doctag(html_doc, start_order=order, start_id=anno_id, language=language)
+        layout_dets.extend(dets)
+
+    page_info = {
+        "page_no": page_number,
+        "height": height,
+        "width": width,
+        "image_path": img_path,
+        "page_attribute": {
+            "language": "english",
+            "data_source": "book",
+            "layout": "single_column",
+            "special_issue": []
+        }
+    }
+
+    extra = {"relation": []}
+
+    return {
+        "layout_dets": layout_dets,
+        "page_info": page_info,
+        "extra": extra
+    }
+
+output_dir = "data/omnidocbench_output_en"
+os.makedirs(output_dir, exist_ok=True) 
+images_out_dir = os.path.join(output_dir, "images")
+os.makedirs(images_out_dir, exist_ok=True)
+visualizations_out_dir = os.path.join(output_dir, "visualizations")
+os.makedirs(visualizations_out_dir, exist_ok=True)
+markdowns_out_dir = os.path.join(output_dir, "markdowns")
+os.makedirs(markdowns_out_dir, exist_ok=True)
+html_out_dir = os.path.join(output_dir, "htmls")
+os.makedirs(html_out_dir, exist_ok=True)
+converted = []
+from to_json_doctags import parse_doctag_to_docling
+from docling_core.types.doc import DoclingDocument, ImageRef
+for i, d in enumerate(tqdm(benchmark_samples.to_dict(orient="records"))):
+    page_id = d['id']
+    sample_image = d['image']
+    sample_html = d['doctag_html']
+    sample_lang = d['language']
+    if sample_lang != 'en':
+        continue
+    tags = parse_doctag_to_docling(sample_html, sample_image, i)
+    doc = DoclingDocument.model_validate(tags)
+    def pil_image_to_data_uri(image: Image.Image, format: str = "JPEG") -> str:
+        """Convert a PIL Image to a data URI."""
+        from io import BytesIO
+        import base64
+
+        buffered = BytesIO()
+        image.save(buffered, format=format)
+        img_str = base64.b64encode(buffered.getvalue()).decode("utf-8")
+        return f"data:image/{format.lower()};base64,{img_str}"
+    sample_image = Image.open(io.BytesIO(sample_image['bytes'])).convert("RGB")
+    doc.pages[1].image = ImageRef(
+        mimetype="image/jpeg",
+        dpi=300,
+        size={"width": sample_image.width, "height": sample_image.height},
+        uri=pil_image_to_data_uri(sample_image, format="JPEG"),
+        _pil=sample_image
+    )
+    imgs_by_page = doc.get_visualization(
+        show_label=True,               # draw label text on boxes
+        show_branch_numbering=False,   # add reading-order numbering (if reading_order)
+        viz_mode="reading_order",      # "reading_order" | "key_value"
+        show_cell_id=True             # for key_value viz
+    )
+    for i, img in imgs_by_page.items():
+        image_path = os.path.join(visualizations_out_dir, f"{doc.name}.jpg")
+        img.save(image_path)   
+        
+    markdown_path = os.path.join(markdowns_out_dir, f"{doc.name}.md")
+    doc.save_as_markdown(markdown_path)
+    
+    
+    page_number = page_id.split("_")[-1]
+    page_number = int(re.findall(r'\d+', page_number)[0])
+    new_img_path = os.path.join(images_out_dir, f"{page_id}.jpg")
+    sample_image.save(new_img_path)
+    img_path = os.path.relpath(new_img_path, output_dir)
+    page_obj = convert_page(page_number, (sample_image.width, sample_image.height), img_path, sample_html, sample_lang)
+    converted.append(page_obj)
+    
+    html_path = os.path.join(html_out_dir, f"{doc.name}.html")
+    with open(html_path, "w", encoding="utf-8") as f:
+        f.write(sample_html)
+
+out_path = os.path.join(output_dir, "omnidocbench.json")
+with open(out_path, "w", encoding="utf-8") as f:
+    json.dump(converted, f, indent=2, ensure_ascii=False)
+
+print(f"✅ Saved {len(converted)} pages to {out_path}")
