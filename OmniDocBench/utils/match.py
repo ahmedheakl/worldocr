@@ -98,8 +98,8 @@ def get_gt_pred_lines(gt_mix,pred_dataset_mix,line_type):
                     gt_cat_list.append(item['category_type'])
             # text      
             elif item['category_type'] in ['text_block', 'title', 'code_txt', 'code_txt_caption', 'reference', 'equation_caption','figure_caption', 'figure_footnote', 'table_caption', 'table_footnote', 'code_algorithm', 'code_algorithm_caption','header', 'footer', 'page_footnote', 'page_number']:
-                gt_lines.append(str(item['text']))
-                norm_gt_lines.append(clean_string(textblock2unicode(str(item['text']))))
+                gt_lines.append(str(item.get('text', "")))
+                norm_gt_lines.append(clean_string(textblock2unicode(str(item.get('text', '')))))
 
                 if item.get('fine_category_type'):
                     gt_cat_list.append(item['fine_category_type'])
@@ -159,7 +159,6 @@ def get_gt_pred_lines(gt_mix,pred_dataset_mix,line_type):
 
 
 def match_gt2pred_simple(gt_items, pred_items, line_type, img_name):
-
     gt_lines, norm_gt_lines, gt_cat_list, pred_lines, norm_pred_lines, gt_items, pred_items = get_gt_pred_lines(gt_items, pred_items,line_type)
     match_list = []
 
