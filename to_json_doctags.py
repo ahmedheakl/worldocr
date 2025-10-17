@@ -257,12 +257,12 @@ class Builder:
             "self_ref": f"#/groups/{idx}",
             "parent": {"$ref": "#/body"},
             "children": [self._text_ref(i) for i in child_text_indices],
-            "content_layer": "body",
-            "name": name,
+            "content_layer": "furniture",
+            "name": "group",
             "label": name
         }
         self.groups.append(node)
-        # NOTE: By convention, we keep groups out of body.children (they're logical aggregations).
+        self.body_children.append({"$ref": f"#/groups/{idx}"})
         return idx
 
 
@@ -353,7 +353,7 @@ def extract_lists(soup: BeautifulSoup, b: Builder):
                 content = text_of(t)
                 if content:
                     bbox = extract_bbox_from_tag(t)
-                    tidx = b.add_text("text", content, {"$ref": "#/body"}, bbox=bbox)
+                    tidx = b.add_text("list_item", content, {"$ref": "#/body"}, bbox=bbox)
                     item_text_ids.append(tidx)
                 mark_processed(t)
             
@@ -361,11 +361,11 @@ def extract_lists(soup: BeautifulSoup, b: Builder):
             raw = text_of(lst)
             bbox = extract_bbox_from_tag(lst)
             for line in [x.strip() for x in raw.split("\n") if x.strip()]:
-                tidx = b.add_text("text", line, {"$ref": "#/body"}, bbox=bbox)
+                tidx = b.add_text("list_item", line, {"$ref": "#/body"}, bbox=bbox)
                 item_text_ids.append(tidx)
 
         # CHANGEME: Currently disabled because it creates too many groups
-        # b.add_group("list", item_text_ids)
+        b.add_group("list", item_text_ids)
         mark_processed(lst)
 
 def extract_figures_and_captions(soup: BeautifulSoup, b: Builder):
@@ -623,8 +623,7 @@ def _compute_body_children_in_dom_order(soup: BeautifulSoup, b: Builder) -> List
                 _push_ref(b._picture_ref(pi))
 
         elif node.name == "list":
-            # lists became multiple text nodes; render those items inline at this point
-            for tid in _find_texts_by_bbox_and_labels(bbox, labels={"text"}):
+            for tid in _find_texts_by_bbox_and_labels(bbox, labels={"text", "list_item"}):
                 _push_ref(b._text_ref(tid))
 
         elif node.name == "toc":
