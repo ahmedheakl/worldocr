@@ -666,9 +666,7 @@ def parse_doctag_to_docling(doc_html: str, img_meta_in: Optional[Dict[str, Any]]
     soup = BeautifulSoup(s, "lxml")  # robust parser
 
     b = Builder()
-    # FIXME: this style destroys the original reading order, we need to do better
-    # e.g. <figure> after <text> will appear before it in the body
-    # 1) Lists → groups of text items
+    # 1) Lists -> groups of text items
     extract_lists(soup, b)
 
     # 2) Tables
@@ -686,13 +684,12 @@ def parse_doctag_to_docling(doc_html: str, img_meta_in: Optional[Dict[str, Any]]
     b.body_children = _compute_body_children_in_dom_order(new_soup, b)
 
     # ---- Origin from image column ----
-    img_meta = _to_dict_possible_str(img_meta_in)
-    filename = img_meta.get("path") if img_meta else None
+    filename = img_meta_in.get("path")
     mimetype = _infer_mimetype_from_path(filename)
     binary_hash = None
-    if img_meta and isinstance(img_meta.get("bytes"), (bytes, bytearray)):
-        binary_hash = _binary_hash_u64(bytes(img_meta["bytes"]))
-    w, h = Image.open(BytesIO(img_meta["bytes"])).size
+    binary_hash = img_meta_in.get("binary_hash", None)
+    w = img_meta_in.get("width", 0)
+    h = img_meta_in.get("height", 0)
     name = _doc_name_from_path(filename, row_idx)
     doc = {
         "schema_name": "DoclingDocument",
@@ -730,6 +727,7 @@ def parse_doctag_to_docling(doc_html: str, img_meta_in: Optional[Dict[str, Any]]
     return doc
 
 
+
 # =========================
 # Runner
 # =========================
@@ -745,18 +743,22 @@ def main():
     docs = []
     for i, row in tqdm(df.reset_index(drop=True).iterrows(), total=len(df), desc="Processing rows"):
         raw = row.get(DOCTAG_COL, "")
-        doc = parse_doctag_to_docling(raw, row[IMAGE_COL], i)
-        img_meta = _to_dict_possible_str(row.get(IMAGE_COL, None))
-        if img_meta and isinstance(img_meta.get("bytes"), (bytes, bytearray)):
-            img_bytes = bytes(img_meta["bytes"])
-            img_hash = doc["origin"].get("binary_hash")
-            if img_hash is not None:
-                img_filename = OUT_DIR_IMAGE + f"/{doc['name']}" + (Path(img_meta.get("path") or "").suffix or ".bin")
-                img_path = Path(img_filename)
-                img_path.parent.mkdir(parents=True, exist_ok=True)
-                with open(img_path, "wb") as imgf:
-                    imgf.write(img_bytes)
-        # save doctag as well
+        image_dict = row[IMAGE_COL]
+        img_bytes = image_dict.get("bytes")
+        image = Image.open(BytesIO(bytes(img_bytes)))
+        image_meta_data = {
+            "path": image_dict.get("path"),
+            "binary_hash": _binary_hash_u64(bytes(img_bytes)),
+            "width": image.width,
+            "height": image.height
+        }
+        doc = parse_doctag_to_docling(raw, image_meta_data, i)
+        img_filename = OUT_DIR_IMAGE + f"/{doc['name']}" + ".png"
+        img_path = Path(img_filename)
+        img_path.parent.mkdir(parents=True, exist_ok=True)
+        with open(img_path, "wb") as img_f:
+            img_f.write(img_bytes)
+            
         if raw.strip(): 
             with open(outdir / f"{doc['name'] or f'row_{i:06d}'}.html", "w", encoding="utf-8") as f:
                 f.write(raw)            
