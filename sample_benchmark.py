@@ -124,7 +124,7 @@ assert {'language', 'difficulty_score'}.issubset(df.columns), "Missing columns!"
 # --------------------------------------------
 # Step 2: Function to sample 100 examples per language
 # --------------------------------------------
-def sample_normal_distribution(group: pd.DataFrame, n_samples: int = 100):
+def sample_normal_distribution(group: pd.DataFrame, n_samples: int = 20):
     group = group.sort_values('difficulty_score').reset_index(drop=True)
     percentiles = np.linspace(0, 100, len(group))
     group['percentile'] = percentiles
@@ -270,7 +270,7 @@ def convert_page(page_number, img_size, img_path, html_doc, language):
         "extra": extra
     }
 
-output_dir = "data/omnidocbench_output_en"
+output_dir = "data/omnidocbench_output_small"
 os.makedirs(output_dir, exist_ok=True) 
 images_out_dir = os.path.join(output_dir, "images")
 os.makedirs(images_out_dir, exist_ok=True)
@@ -281,16 +281,25 @@ os.makedirs(markdowns_out_dir, exist_ok=True)
 html_out_dir = os.path.join(output_dir, "htmls")
 os.makedirs(html_out_dir, exist_ok=True)
 converted = []
-from to_json_doctags import parse_doctag_to_docling
+from to_json_doctags import parse_doctag_to_docling, _binary_hash_u64
 from docling_core.types.doc import DoclingDocument, ImageRef
+from io import BytesIO
 for i, d in enumerate(tqdm(benchmark_samples.to_dict(orient="records"))):
     page_id = d['id']
     sample_image = d['image']
     sample_html = d['doctag_html']
     sample_lang = d['language']
-    if sample_lang != 'en':
-        continue
-    tags = parse_doctag_to_docling(sample_html, sample_image, i)
+    # if sample_lang not in ['fr', 'en', 'es']:
+    #     continue
+    img_bytes = sample_image.get("bytes")
+    image = Image.open(BytesIO(bytes(img_bytes)))
+    image_meta_data = {
+        "path": sample_image.get("path"),
+        "binary_hash": _binary_hash_u64(bytes(img_bytes)),
+        "width": image.width,
+        "height": image.height
+    }
+    tags = parse_doctag_to_docling(sample_html, image_meta_data, i)
     doc = DoclingDocument.model_validate(tags)
     def pil_image_to_data_uri(image: Image.Image, format: str = "JPEG") -> str:
         """Convert a PIL Image to a data URI."""
