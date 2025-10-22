@@ -9,10 +9,10 @@ finetuning_type: full
 freeze_vision_tower: false
 freeze_multi_modal_projector: false
 freeze_language_model: false
-deepspeed: examples/deepspeed/ds_z3_config.json
+deepspeed: examples/deepspeed/ds_z2_config.json
 
 ### dataset
-dataset: worldocr_v2
+dataset: worldocr_v3
 template: granite_docling
 cutoff_len: 8192
 max_samples: 10000000
@@ -21,7 +21,7 @@ preprocessing_num_workers: 4
 dataloader_num_workers: 4
 
 ### output
-output_dir: ../checkpoints/granitedocling2b-v1
+output_dir: ../checkpoints/granitedocling2b-v2
 logging_steps: 10
 save_steps: 10000
 plot_loss: true
@@ -31,10 +31,10 @@ report_to: wandb
 run_name: granitedocling2b-v1
 
 ### train
-per_device_train_batch_size: 4
+per_device_train_batch_size: 2
 gradient_accumulation_steps: 2
 learning_rate: 1.0e-5
-num_train_epochs: 3.0
+num_train_epochs: 1.0
 lr_scheduler_type: cosine
 warmup_ratio: 0.1
 bf16: true

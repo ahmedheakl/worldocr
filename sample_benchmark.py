@@ -12,7 +12,7 @@ import io
 # --------------------------------------------
 # Step 1: Load and concatenate all parquet files
 # --------------------------------------------
-files = glob("data/train/*.parquet")[-10:]
+files = glob("data/train/*.parquet")
 all_dfs = [pd.read_parquet(f) for f in tqdm(files)]
 df = pd.concat(all_dfs, ignore_index=True)
 filter_langs = ['en']
@@ -124,7 +124,7 @@ assert {'language', 'difficulty_score'}.issubset(df.columns), "Missing columns!"
 # --------------------------------------------
 # Step 2: Function to sample 100 examples per language
 # --------------------------------------------
-def sample_normal_distribution(group: pd.DataFrame, n_samples: int = 20):
+def sample_normal_distribution(group: pd.DataFrame, n_samples: int = 30):
     group = group.sort_values('difficulty_score').reset_index(drop=True)
     percentiles = np.linspace(0, 100, len(group))
     group['percentile'] = percentiles
@@ -220,7 +220,7 @@ def parse_doctag(html_str, start_order=0, start_id=0, language="unknown"):
             "order": order,
             "anno_id": anno_id,
             "attribute": {
-                "text_language": "text_english",
+                "text_language": f"text_{language}",
                 "text_background": "white",
                 "text_rotate": "normal"
             },
@@ -238,7 +238,16 @@ def parse_doctag(html_str, start_order=0, start_id=0, language="unknown"):
 
     return layout_dets, order, anno_id
 
+def to_lang(code):
+    import pycountry
+    language = pycountry.languages.get(alpha_2=code)
+    if language: return language.name
+    return "Unknown language code"
+
+
+
 def convert_page(page_number, img_size, img_path, html_doc, language):
+    language = to_lang(language).lower()
     width, height = img_size
 
     layout_dets = []
@@ -255,7 +264,7 @@ def convert_page(page_number, img_size, img_path, html_doc, language):
         "width": width,
         "image_path": img_path,
         "page_attribute": {
-            "language": "english",
+            "language": language,
             "data_source": "book",
             "layout": "single_column",
             "special_issue": []
@@ -270,7 +279,7 @@ def convert_page(page_number, img_size, img_path, html_doc, language):
         "extra": extra
     }
 
-output_dir = "data/omnidocbench_output_small"
+output_dir = "data/omnidocbench_output_med"
 os.makedirs(output_dir, exist_ok=True) 
 images_out_dir = os.path.join(output_dir, "images")
 os.makedirs(images_out_dir, exist_ok=True)
@@ -284,13 +293,14 @@ converted = []
 from to_json_doctags import parse_doctag_to_docling, _binary_hash_u64
 from docling_core.types.doc import DoclingDocument, ImageRef
 from io import BytesIO
+
 for i, d in enumerate(tqdm(benchmark_samples.to_dict(orient="records"))):
     page_id = d['id']
     sample_image = d['image']
     sample_html = d['doctag_html']
     sample_lang = d['language']
-    # if sample_lang not in ['fr', 'en', 'es']:
-    #     continue
+    if sample_lang not in ['fr', 'en', 'es', 'he', 'ar', 'it', 'de', 'pt']:
+        continue
     img_bytes = sample_image.get("bytes")
     image = Image.open(BytesIO(bytes(img_bytes)))
     image_meta_data = {

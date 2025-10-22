@@ -5,12 +5,13 @@ import pdb
 
 converter = DocumentConverter()
 
-img_path = './OmniDocBench/pdfs'
+img_path = '../data/omnidocbench_output_med/cleaned_images'
 
-save_path = '../result/docling'
+save_path = '../data/predictions_med/docling'
+os.makedirs(save_path, exist_ok=True)
 
 for img_name in tqdm(os.listdir(img_path)):
-    if not img_name.endswith('.pdf'):
+    if not img_name.endswith('.jpg'):
         continue
     
     img_name = img_name.strip()

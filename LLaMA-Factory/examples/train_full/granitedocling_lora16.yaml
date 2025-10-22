@@ -1,24 +1,21 @@
 ### model
-model_name_or_path: Qwen/Qwen3-VL-2B-Instruct
-image_max_pixels: 262144
-video_max_pixels: 16384
+model_name_or_path: ibm-granite/granite-docling-258M
 trust_remote_code: true
 
 ### method
 stage: sft
 do_train: true
-# finetuning_type: full
 finetuning_type: lora
-lora_rank: 8
+lora_rank: 16
 lora_target: all
 freeze_vision_tower: false
 freeze_multi_modal_projector: false
 freeze_language_model: false
-deepspeed: examples/deepspeed/ds_z3_config.json
+deepspeed: examples/deepspeed/ds_z2_config.json
 
 ### dataset
-dataset: worldocr_v4
-template: qwen3_vl
+dataset: worldocr_v3
+template: granite_docling
 cutoff_len: 8192
 max_samples: 10000000
 overwrite_cache: false
@@ -26,18 +23,18 @@ preprocessing_num_workers: 4
 dataloader_num_workers: 4
 
 ### output
-output_dir: ../checkpoints/qwen3vl-2b-v1
+output_dir: ../checkpoints/granitedocling2b-v2-lora16
 logging_steps: 10
-save_steps: 10000
+save_steps: 100000
 plot_loss: true
 overwrite_output_dir: true
 save_only_model: true
 report_to: wandb 
-run_name: qwen3vl-2b-v1
+run_name: granitedocling2b-v2-lora16
 
 ### train
 per_device_train_batch_size: 2
-gradient_accumulation_steps: 4
+gradient_accumulation_steps: 2
 learning_rate: 1.0e-5
 num_train_epochs: 1.0
 lr_scheduler_type: cosine

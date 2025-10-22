@@ -19,9 +19,9 @@ end2end_eval:
   dataset:
     dataset_name: end2end_dataset
     ground_truth:
-      data_path: ../data/omnidocbench_output_en/omnidocbench.json
+      data_path: ../data/omnidocbench_output_med/cleaned_omnidocbench.json
     prediction:
-      data_path: ../data/predictions/docling-granite
+      data_path: ../data/predictions_med/qwen3vl2b
     match_method: quick_match
     # filter: 
     #   language: english

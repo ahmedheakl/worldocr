@@ -15,4 +15,4 @@ if [ -f .env ]; then
 fi
 set +a
 
-FORCE_TORCHRUN=1 llamafactory-cli train examples/train_full/granitedocling_full_sft.yaml
+FORCE_TORCHRUN=1 llamafactory-cli train examples/train_full/qwen3vl_full_sft.yaml

@@ -53,15 +53,23 @@ def _to_dict_possible_str(x):
         except Exception:
             return None
     return None
-
+mm = 0
 def extract_bbox_from_tag(tag: Tag) -> Optional[Dict[str, Any]]:
     """Extract bbox from <loc_> tags that precede or wrap the element"""
+    global mm
     # Look for <loc_X> patterns in the tag's previous siblings or in parent
     tag_text = html.unescape(str(tag))
-    m = re.search(r'<loc_(\d+)><loc_(\d+)><loc_(\d+)><loc_(\d+)>', tag_text)
+    # m = re.search(r'<loc_(\d+)><loc_(\d+)><loc_(\d+)><loc_(\d+)>', tag_text)
+    m = re.search(r'<loc_([\d.]+)><loc_([\d.]+)><loc_([\d.]+)><loc_([\d.]+)>', tag_text)
     locs = m.groups() if m else []
     assert len(locs) == 4, f"Found {len(locs)} <loc_> tags in element; expected exactly 4."
-    coords = [int(x) for x in locs[-4:]]
+    coords = [int(float(x)) for x in locs[-4:]]
+    # x0, y0, x1, y1 = coords
+    # min_x = 189
+    # max_x = 1083
+    # if abs(min_x - x0) < 5 and abs(max_x - x1) > 5:
+    #     x0 = x1; x1 = max_x
+    #     coords = [x0, y0, x1, y1]
     return {
         "page_no": 1,
         "bbox": {

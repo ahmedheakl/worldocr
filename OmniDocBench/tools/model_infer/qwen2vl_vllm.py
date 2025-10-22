@@ -8,12 +8,12 @@ from transformers import AutoProcessor
 from vllm import LLM, SamplingParams
 
 # ------------ Paths ------------
-input_dir = '../data/omnidocbench_output_en/images'
-output_dir = '../data/predictions/qwen2vl'
+input_dir = '../data/omnidocbench_output_med/images'
+output_dir = '../data/predictions_med/qwen3vl2b'
 os.makedirs(output_dir, exist_ok=True)
 
 # ------------ Model ------------
-MODEL_NAME = "Qwen/Qwen2.5-VL-7B-Instruct"
+MODEL_NAME = "Qwen/Qwen3-VL-2B-Instruct"
 model_max_len = 32768  # Qwen2.5 max length
 llm = LLM(
     model=MODEL_NAME,
