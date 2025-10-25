@@ -8,14 +8,19 @@ import re
 import os
 import json
 import io
+from to_json_doctags import to_markdown
+from filtered_colored import is_colorized_overlay_page
+import tempfile
+import random
 
 # --------------------------------------------
 # Step 1: Load and concatenate all parquet files
 # --------------------------------------------
-files = glob("data/train/*.parquet")
+files = glob("data/train2/*.parquet")
+files = random.sample(files, k=10)  # limit to 500 files for memory reasons
 all_dfs = [pd.read_parquet(f) for f in tqdm(files)]
 df = pd.concat(all_dfs, ignore_index=True)
-filter_langs = ['en']
+filter_langs = ["ru", "en", "pl", "es", "fr", "uk", "it", "sr", "hr", "bg", "ja", "cs", "ro", "de", "pt", "zh", "nl", "vi", "el", "hu", "tr"]
 del all_dfs
 
 vital_tags = {
@@ -142,6 +147,39 @@ def sample_normal_distribution(group: pd.DataFrame, n_samples: int = 30):
 # --------------------------------------------
 # Step 3: Apply per-language sampling
 # --------------------------------------------
+# filter out samples with colorized overlay pages
+from multiprocessing import Pool, cpu_count
+
+def check_colorized_single(args):
+    """Helper function for parallel processing."""
+    idx, img_bytes, img_path = args
+    if "highres" in img_path.lower():
+        return None
+    with tempfile.NamedTemporaryFile(suffix=".jpg", delete=True) as tmp:
+        with open(tmp.name, "wb") as f:
+            f.write(bytes(img_bytes))
+        if is_colorized_overlay_page(tmp.name):
+            return idx
+    return None
+
+def filter_colorized_overlay(df: pd.DataFrame) -> pd.DataFrame:
+    # Prepare data for parallel processing
+    data = [(idx, row['image']['bytes'], row['image']['path']) for idx, row in df.iterrows()]
+    
+    # Use multiprocessing
+    with Pool(processes=4) as pool:
+        results = list(tqdm(
+            pool.imap(check_colorized_single, data),
+            total=len(data),
+            desc="Filtering colorized overlay pages"
+        ))
+    
+    # Filter out None values to get indices to remove
+    filtered_indices = [idx for idx in results if idx is not None]
+    filtered_df = df.drop(index=filtered_indices).reset_index(drop=True)
+    return filtered_df
+
+df = filter_colorized_overlay(df)
 df['difficulty_score'] = df['doctag_otsl'].apply(get_score)
 benchmark_samples = df.groupby('language', group_keys=False).apply(sample_normal_distribution)
 del df
@@ -279,7 +317,7 @@ def convert_page(page_number, img_size, img_path, html_doc, language):
         "extra": extra
     }
 
-output_dir = "data/omnidocbench_output_med"
+output_dir = "data/omnidocbench_output_large"
 os.makedirs(output_dir, exist_ok=True) 
 images_out_dir = os.path.join(output_dir, "images")
 os.makedirs(images_out_dir, exist_ok=True)
@@ -299,7 +337,7 @@ for i, d in enumerate(tqdm(benchmark_samples.to_dict(orient="records"))):
     sample_image = d['image']
     sample_html = d['doctag_html']
     sample_lang = d['language']
-    if sample_lang not in ['fr', 'en', 'es', 'he', 'ar', 'it', 'de', 'pt']:
+    if sample_lang not in filter_langs:
         continue
     img_bytes = sample_image.get("bytes")
     image = Image.open(BytesIO(bytes(img_bytes)))
@@ -339,7 +377,10 @@ for i, d in enumerate(tqdm(benchmark_samples.to_dict(orient="records"))):
         img.save(image_path)   
         
     markdown_path = os.path.join(markdowns_out_dir, f"{doc.name}.md")
-    doc.save_as_markdown(markdown_path)
+    markdown = to_markdown(tags)
+    with open(markdown_path, "w", encoding="utf-8") as f:
+        f.write(markdown)
+    # doc.save_as_markdown(markdown_path)
     
     
     page_number = page_id.split("_")[-1]

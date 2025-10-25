@@ -21,7 +21,7 @@ end2end_eval:
     ground_truth:
       data_path: ../data/omnidocbench_output_med/cleaned_omnidocbench.json
     prediction:
-      data_path: ../data/predictions_med/qwen25vl3b
+      data_path: ../data/predictions_med/qwen3vl2b-lorav4
     match_method: quick_match
     # filter: 
     #   language: english
