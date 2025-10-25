@@ -79,6 +79,9 @@ df = pd.concat(all_dfs, ignore_index=True)
 del all_dfs
 df = df.sample(frac=1, random_state=42).reset_index(drop=True)
 
+# def get_components(doc):
+    
+
 
 for row in tqdm(df.itertuples(index=False, name="Row"), desc=f"Building ...", total=len(df), leave=False):
     page_id = getattr(row, "id")
@@ -109,11 +112,11 @@ for row in tqdm(df.itertuples(index=False, name="Row"), desc=f"Building ...", to
             }
 
             doc_dict = parse_doctag_to_docling(doctag_html, image_meta_data, page_id)
-            doc = DoclingDocument.model_validate(doc_dict)
             if args.format == "markdown":
                 tags = to_markdown(doc_dict)
                 prompt = MARKDOWN_PROMPT
             else:
+                doc = DoclingDocument.model_validate(doc_dict)
                 tags = doc.export_to_doctags()
                 prompt = DOCTAGS_PROMPT
             with open(image_path, "wb") as img_f:

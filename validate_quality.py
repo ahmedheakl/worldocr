@@ -6,15 +6,21 @@ from docling_core.types.doc import (
     DoclingDocument,
     ImageRef
 )
+from to_json_doctags import to_markdown
 import os
 
-ds_id = "youssefkhalil320/urdu_images_doc_tags_all_v8"
-ds = load_dataset(ds_id, split="train")
-visualizations_out_dir = "data/validated_visualizations_khalil"
+# ds_id = "youssefkhalil320/urdu_images_doc_tags_all_v9"
+# ds_id = "ahmedheakl/wordocr_instruct_v4"
+ds_id = "youssefkhalil320/persian_images_doc_tags_all_v12"
+split="train"
+ds = load_dataset(ds_id, split=split)
+# sample 100 samples
+ds = ds.shuffle(seed=42).select(range(100))
+visualizations_out_dir = f"data/validated_visualizations_khalil_persian"
 os.makedirs(visualizations_out_dir, exist_ok=True)
 
 for idx, row in enumerate(tqdm(ds)):
-    if row['has_non_full_width_text']: continue
+    # if row['has_non_full_width_text']: continue
     image = row["image"]
     image_path = row['id'].replace(".pdf", ".jpg")
     img_bytes = image.tobytes()
@@ -25,6 +31,7 @@ for idx, row in enumerate(tqdm(ds)):
         "height": image.height
     }
     doc_dict = parse_doctag_to_docling(row["doctag_html"], image_meta_data, 0)
+    markdown = to_markdown(doc_dict)
     doc = DoclingDocument.model_validate(doc_dict)
     def pil_image_to_data_uri(image: Image.Image, format: str = "JPEG") -> str:
         """Convert a PIL Image to a data URI."""
@@ -52,4 +59,6 @@ for idx, row in enumerate(tqdm(ds)):
     for i, img in imgs_by_page.items():
         image_path = os.path.join(visualizations_out_dir, f"{doc.name}_{idx}.jpg")
         img.save(image_path)   
+    with open(os.path.join(visualizations_out_dir, f"{doc.name}_{idx}.md"), "w", encoding="utf-8") as f:
+        f.write(row["doctag_html"])
         

@@ -1,31 +1,35 @@
-import os
-import random
-import numpy as np
 from PIL import Image
-import torch
-
 from transformers import AutoProcessor
 from vllm import LLM, SamplingParams
+from tqdm import tqdm
+from pathlib import Path
 
 # ------------ Paths ------------
-input_dir = '../data/omnidocbench_output_med/images'
-output_dir = '../data/predictions_med/qwen3vl2b'
-os.makedirs(output_dir, exist_ok=True)
-
+input_dir = Path('../data/omnidocbench_output_med/images')
+output_dir = Path('../data/predictions_med/qwen3vl2b-lorav4')
+output_dir.mkdir(parents=True, exist_ok=True)
+import torch
+num_devices = torch.cuda.device_count() if torch.cuda.is_available() else 1
+print("="*15, f"Using {num_devices} device(s) for inference.", "="*15)
 # ------------ Model ------------
-MODEL_NAME = "Qwen/Qwen3-VL-2B-Instruct"
-model_max_len = 32768  # Qwen2.5 max length
+# MODEL_NAME = "Qwen/Qwen3-VL-2B-Instruct"
+MODEL_NAME = "../checkpoints/qwen3vl-2b-v4/merged_model"
+# MODEL_NAME = "Qwen/Qwen2.5-VL-3B-Instruct"
+max_len=16384
 llm = LLM(
     model=MODEL_NAME,
-    tensor_parallel_size=1,
+    tensor_parallel_size=num_devices,
     trust_remote_code=True,   # Qwen uses custom processors/templates
-    dtype="float16",
-    gpu_memory_utilization=0.8,  # tweak if OOM
-    max_model_len=model_max_len,
+    gpu_memory_utilization=0.9,  # tweak if OOM
+    max_model_len=max_len,
+)
+processor = AutoProcessor.from_pretrained(MODEL_NAME, trust_remote_code=True)
+sampling_params = SamplingParams(
+    max_tokens=max_len,        # adjust to avoid OOM
+    temperature=0.0,        # deterministic
+    top_p=1.0,
 )
 
-# Chat template helper
-processor = AutoProcessor.from_pretrained(MODEL_NAME, trust_remote_code=True)
 
 # ------------ Prompt ------------
 PROMPT = r'''You are an AI assistant specialized in converting PDF images to Markdown format. Please follow these instructions for the conversion:
@@ -59,62 +63,49 @@ IMAGE_EXTS = ('.jpg', '.jpeg', '.png', '.gif', '.bmp', '.tiff', '.webp')
 def is_image_file(fname: str) -> bool:
     return any(fname.lower().endswith(ext) for ext in IMAGE_EXTS)
 
-def fix_seed(seed: int = 0):
-    random.seed(seed)
-    np.random.seed(seed)
-    torch.manual_seed(seed)
-    torch.cuda.manual_seed_all(seed)
 
-sampling = SamplingParams(
-    max_tokens=8192,        # adjust to avoid OOM
-    temperature=0.0,        # deterministic
-    top_p=1.0,
+messages = [
+    {
+        "role": "user",
+        "content": [
+            {"type": "image"},
+            {"type": "text", "text": PROMPT},
+        ],
+    },
+]
+
+batch_size = 8*num_devices  # adjust based on your GPU memory
+valid_exts = {".png", ".jpg", ".jpeg"}
+img_paths = sorted(
+    [p for p in input_dir.rglob("*") if p.suffix.lower() in valid_exts]
 )
+for i in range(0, len(img_paths), batch_size):
+    in_img_paths = img_paths[i : i + batch_size]
+    batched_inputs = []
+    output_stems = []  # one stem per image to name outputs
 
-def build_prompt(image_path: str) -> str:
-    """Use Qwen's chat template; put an image placeholder + the text prompt."""
-    messages = [
-        {
-            "role": "user",
-            "content": [
-                {"type": "image", "image": image_path},  # path or URL is fine here
-                {"type": "text", "text": PROMPT},
-            ],
-        }
-    ]
-    return processor.apply_chat_template(
-        messages, tokenize=False, add_generation_prompt=True
-    )
+    for img_path in in_img_paths:
+        with Image.open(img_path) as im:
+            image = im.convert("RGB")
 
-def run_one(image_path: str) -> str:
-    fix_seed(0)
-    prompt_text = build_prompt(image_path)
-    pil_img = Image.open(image_path).convert("RGB")
-    req = {
-        "prompt": prompt_text,
-        "multi_modal_data": {"image": [pil_img]},
-    }
-    outputs = llm.generate([req], sampling_params=sampling)
-    return outputs[0].outputs[0].text
-
-# ------------ Batch over directory ------------
-for root, _, files in os.walk(input_dir):
-    for name in files:
-        if not is_image_file(name):
+        
+        rel = img_path.relative_to(input_dir)
+        stem = rel.as_posix().rsplit(".", 1)[0].replace("/", "__")
+        md_path = output_dir / f"{stem}.md"
+        if md_path.exists():
+            print(f"Skipping existing file: {md_path}")
             continue
+        prompt = processor.apply_chat_template(messages, add_generation_prompt=True)
+        batched_inputs.append({"prompt": prompt, "multi_modal_data": {"image": image}})
+        output_stems.append(stem)
+        
+    outputs = llm.generate(batched_inputs, sampling_params=sampling_params)
+    for stem, output, input_data in tqdm(zip(output_stems, outputs, batched_inputs), desc="Saving outputs", total=len(in_img_paths)):
+        doctags = output.outputs[0].text
+        md_path = output_dir / f"{stem}.md"
+        doctags = doctags.replace("<think>", "").replace("</think>", "").strip()
+        with open(md_path, "w", encoding="utf-8") as f:
+            f.write(doctags)
 
-        image_path = os.path.join(root, name)
-        basename = os.path.splitext(name)[0]
-        markdown_file = os.path.join(output_dir, f"{basename}.md")
-
-        if os.path.exists(markdown_file):
-            print(f"Already here: {markdown_file}")
-            continue
-
-        try:
-            md = run_one(image_path)
-            with open(markdown_file, "w", encoding="utf-8") as f:
-                f.write(md)
-            print(f"Saved: {markdown_file}")
-        except Exception as e:
-            print(f"Failed on {image_path}: {e}")
+    print(f"Processed {len(in_img_paths)} images.")
+        

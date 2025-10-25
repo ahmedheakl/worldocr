@@ -44,19 +44,43 @@ def _infer_mimetype_from_path(path: Optional[str]) -> str:
 def _doc_name_from_path(path: Optional[str], idx: int) -> str:
     return Path(path).stem if path else f"row_{idx:06d}"
 
-def _to_dict_possible_str(x):
-    if isinstance(x, dict) or x is None:
-        return x
-    if isinstance(x, str) and x.strip().startswith("{"):
-        try:
-            return ast.literal_eval(x)
-        except Exception:
-            return None
-    return None
-mm = 0
+from docling_core.types.doc import DoclingDocument
+from docling_core.types.doc.document import DOCUMENT_TOKENS_EXPORT_LABELS, DEFAULT_CONTENT_LAYERS
+from docling_core.transforms.serializer.html import HTMLTableSerializer
+from docling_core.transforms.serializer.markdown import MarkdownDocSerializer, MarkdownParams
+import sys
+from docling_core.types.doc.base import ImageRefMode
+
+def to_markdown(doc: Dict[str, Any]) -> str:
+    doc = DoclingDocument.model_validate(doc)
+    my_labels = DOCUMENT_TOKENS_EXPORT_LABELS
+    my_layers = DEFAULT_CONTENT_LAYERS
+    serializer = MarkdownDocSerializer(
+        doc=doc,
+        table_serializer=HTMLTableSerializer(),
+        params=MarkdownParams(
+            labels=my_labels,
+            layers=my_layers,
+            pages=None,
+            start_idx=0,
+            stop_idx=sys.maxsize,
+            escape_html=False,
+            escape_underscores=True,
+            image_placeholder="<!-- image -->",
+            enable_chart_tables=True,
+            image_mode=ImageRefMode.PLACEHOLDER,
+            indent=4,
+            wrap_width=None,
+            page_break_placeholder=None,
+            include_annotations=True,
+            mark_annotations=False,
+        ),
+    )
+    ser_res = serializer.serialize()
+    return ser_res.text
+
 def extract_bbox_from_tag(tag: Tag) -> Optional[Dict[str, Any]]:
     """Extract bbox from <loc_> tags that precede or wrap the element"""
-    global mm
     # Look for <loc_X> patterns in the tag's previous siblings or in parent
     tag_text = html.unescape(str(tag))
     # m = re.search(r'<loc_(\d+)><loc_(\d+)><loc_(\d+)><loc_(\d+)>', tag_text)
@@ -64,12 +88,11 @@ def extract_bbox_from_tag(tag: Tag) -> Optional[Dict[str, Any]]:
     locs = m.groups() if m else []
     assert len(locs) == 4, f"Found {len(locs)} <loc_> tags in element; expected exactly 4."
     coords = [int(float(x)) for x in locs[-4:]]
-    # x0, y0, x1, y1 = coords
-    # min_x = 189
-    # max_x = 1083
-    # if abs(min_x - x0) < 5 and abs(max_x - x1) > 5:
-    #     x0 = x1; x1 = max_x
-    #     coords = [x0, y0, x1, y1]
+    x0, y0, x1, y1 = coords
+    min_x, max_x = 223, 1274
+    if abs(min_x - x0) < 5 and abs(max_x - x1) > 5:
+        x0 = x1; x1 = max_x
+        coords = [x0, y0, x1, y1]
     return {
         "page_no": 1,
         "bbox": {
@@ -348,7 +371,8 @@ def extract_tables(soup: BeautifulSoup, b: Builder) -> List[int]:
 
 def extract_lists(soup: BeautifulSoup, b: Builder):
     # <list> usually contains <text> items → make a group that references those texts
-    for lst in soup.find_all("list"):
+    list_alises = ['list', 'list-item']
+    for lst in soup.find_all(list_alises):
         if already_processed(lst):
             continue
         item_text_ids: List[int] = []
@@ -609,7 +633,7 @@ def _compute_body_children_in_dom_order(soup: BeautifulSoup, b: Builder) -> List
     # Which DOM nodes should drive body order?
     def _is_interesting(node: Tag) -> bool:
         if not isinstance(node, Tag): return False
-        if node.name in {"table", "figure", "list", "toc", "text", "quote", "equation", "title", "header", "footer"}:
+        if node.name in {"table", "figure", "list", "toc", "text", "quote", "equation", "title", "header", "footer", 'list-item'}:
             return True
         # dynamic section headers: section_header_level_N
         return level_from_header_tag(node.name or "") is not None
@@ -630,7 +654,7 @@ def _compute_body_children_in_dom_order(soup: BeautifulSoup, b: Builder) -> List
             if pi is not None:
                 _push_ref(b._picture_ref(pi))
 
-        elif node.name == "list":
+        elif node.name in ["list", 'list-item']:
             for tid in _find_texts_by_bbox_and_labels(bbox, labels={"text", "list_item"}):
                 _push_ref(b._text_ref(tid))
 

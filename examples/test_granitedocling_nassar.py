@@ -4,6 +4,14 @@ from docling_core.types.doc.document import DocTagsDocument
 from transformers import AutoProcessor, AutoModelForVision2Seq
 from transformers.image_utils import load_image
 
+import random, numpy as np, torch
+random.seed(0)
+np.random.seed(0)
+torch.manual_seed(0)
+torch.cuda.manual_seed_all(0)
+torch.backends.cudnn.benchmark = False
+torch.backends.cudnn.deterministic = True
+
 device = torch.device("cuda" if torch.cuda.is_available() else "mps" if torch.backends.mps.is_available() else "cpu")
 
 # Load images
@@ -14,7 +22,7 @@ processor = AutoProcessor.from_pretrained(model_name)
 model = AutoModelForVision2Seq.from_pretrained(
     model_name,
     torch_dtype=torch.bfloat16,
-    _attn_implementation="flash_attention_2",
+    # _attn_implementation="flash_attention_2",
 ).to(device)
 
 messages = [

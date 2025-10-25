@@ -9,7 +9,7 @@ stage: sft
 do_train: true
 # finetuning_type: full
 finetuning_type: lora
-lora_rank: 8
+lora_rank: 16
 lora_target: all
 freeze_vision_tower: false
 freeze_multi_modal_projector: false
@@ -17,7 +17,7 @@ freeze_language_model: false
 deepspeed: examples/deepspeed/ds_z3_config.json
 
 ### dataset
-dataset: worldocr_v4
+dataset: worldocr_v7
 template: qwen3_vl
 cutoff_len: 8192
 max_samples: 10000000
@@ -26,14 +26,14 @@ preprocessing_num_workers: 4
 dataloader_num_workers: 4
 
 ### output
-output_dir: ../checkpoints/qwen3vl-2b-v1
+output_dir: ../checkpoints/qwen3vl-2b-v4
 logging_steps: 10
 save_steps: 10000
 plot_loss: true
 overwrite_output_dir: true
 save_only_model: true
 report_to: wandb 
-run_name: qwen3vl-2b-v1
+run_name: qwen3vl-2b-v4
 
 ### train
 per_device_train_batch_size: 2
