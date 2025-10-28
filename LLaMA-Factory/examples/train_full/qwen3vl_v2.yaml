@@ -9,15 +9,16 @@ stage: sft
 do_train: true
 # finetuning_type: full
 finetuning_type: lora
-lora_rank: 16
-lora_target: all
-freeze_vision_tower: false
-freeze_multi_modal_projector: false
+lora_dropout: 0.1
+lora_rank: 64
+lora_target: ['q_proj', 'k_proj', 'v_proj', 'o_proj', 'gate_proj', 'up_proj', 'down_proj']  # Specific modules instead of 'all'
+freeze_vision_tower: true
+freeze_multi_modal_projector: true
 freeze_language_model: false
 deepspeed: examples/deepspeed/ds_z3_config.json
 
 ### dataset
-dataset: worldocr_v7
+dataset: worldocr_v8
 template: qwen3_vl
 cutoff_len: 8192
 max_samples: 10000000
@@ -26,23 +27,24 @@ preprocessing_num_workers: 4
 dataloader_num_workers: 4
 
 ### output
-output_dir: ../checkpoints/qwen3vl-2b-v4
+output_dir: ../checkpoints/qwen3vl-2b-v6
 logging_steps: 10
 save_steps: 10000
 plot_loss: true
 overwrite_output_dir: true
 save_only_model: true
 report_to: wandb 
-run_name: qwen3vl-2b-v4
+run_name: qwen3vl-2b-v6
 
 ### train
 per_device_train_batch_size: 2
 gradient_accumulation_steps: 4
 learning_rate: 1.0e-5
-num_train_epochs: 1.0
+num_train_epochs: 3.0
 lr_scheduler_type: cosine
 warmup_ratio: 0.1
 bf16: true
+weight_decay: 0.01
 ddp_timeout: 180000000
 resume_from_checkpoint: null
 optim: adamw_torch_fused

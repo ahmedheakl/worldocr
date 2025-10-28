@@ -11,12 +11,12 @@ import os
 
 # ds_id = "youssefkhalil320/urdu_images_doc_tags_all_v9"
 # ds_id = "ahmedheakl/wordocr_instruct_v4"
-ds_id = "youssefkhalil320/persian_images_doc_tags_all_v12"
+ds_id = "youssefkhalil320/urdu_images_doc_tags_all_v14"
 split="train"
 ds = load_dataset(ds_id, split=split)
 # sample 100 samples
 ds = ds.shuffle(seed=42).select(range(100))
-visualizations_out_dir = f"data/validated_visualizations_khalil_persian"
+visualizations_out_dir = f"data/validated_visualizations_khalil_urdu_v1"
 os.makedirs(visualizations_out_dir, exist_ok=True)
 
 for idx, row in enumerate(tqdm(ds)):

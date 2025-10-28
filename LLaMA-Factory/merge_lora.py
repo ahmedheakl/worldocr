@@ -7,10 +7,10 @@ import os
 def main(args):
     model = AutoModelForVision2Seq.from_pretrained(
         args.base_model,
-        torch_dtype=torch.float16,
+        torch_dtype=torch.bfloat16,
         device_map="auto"
     )
-    files = os.listdir(args.lora_path)
+    # files = os.listdir(args.lora_path)
     # for file in files:
     #     if os.path.isdir(os.path.join(args.lora_path, file)):
     #         args.lora_path = os.path.join(args.lora_path, file)

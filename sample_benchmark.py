@@ -179,6 +179,36 @@ def filter_colorized_overlay(df: pd.DataFrame) -> pd.DataFrame:
     filtered_df = df.drop(index=filtered_indices).reset_index(drop=True)
     return filtered_df
 
+# filter with low quality score
+from check_layout import infer_quality
+from to_json_doctags import parse_doctag_to_docling
+
+def check_quality(args):
+    """Helper function for parallel processing."""
+    idx, doctag_html, image = args
+    tags = parse_doctag_to_docling(doctag_html, {}, 0)
+    image = Image.open(io.BytesIO(bytes(image['bytes']))).convert("RGB")
+    quality = infer_quality(image, tags)
+    if quality < 0.9: return idx
+
+def filter_quality(df) -> pd.DataFrame:
+    # Prepare data for parallel processing
+    data = [(idx, row['doctag_html'], row['image']) for idx, row in df.iterrows()]
+    
+    results = []
+    for args in tqdm(data, desc="Filtering low quality layout pages"):
+        try:
+            res = check_quality(args)
+        except Exception as e:
+            res = args[0]
+        results.append(res)
+    
+    # Filter out None values to get indices to remove
+    filtered_indices = [idx for idx in results if idx is not None]
+    filtered_df = df.drop(index=filtered_indices).reset_index(drop=True)
+    return filtered_df
+
+df = filter_quality(df)
 df = filter_colorized_overlay(df)
 df['difficulty_score'] = df['doctag_otsl'].apply(get_score)
 benchmark_samples = df.groupby('language', group_keys=False).apply(sample_normal_distribution)
@@ -228,7 +258,8 @@ def parse_doctag(html_str, start_order=0, start_id=0, language="unknown"):
 
     # Parse doctag XML
     soup = BeautifulSoup(html_str, "html.parser")
-
+    target_elements = [f"section_header_level_{i}" for i in range(1, 10)]
+    target_elements += ["text", "list", "table", "table_caption", "figure_caption", "eqution", "header"]
     for element in soup.find_all(["text", "list", "table",
                                   "section_header_level_1",
                                   "section_header_level_2",
@@ -327,6 +358,8 @@ markdowns_out_dir = os.path.join(output_dir, "markdowns")
 os.makedirs(markdowns_out_dir, exist_ok=True)
 html_out_dir = os.path.join(output_dir, "htmls")
 os.makedirs(html_out_dir, exist_ok=True)
+doctags_out_dir = os.path.join(output_dir, "doctags")
+os.makedirs(doctags_out_dir, exist_ok=True)
 converted = []
 from to_json_doctags import parse_doctag_to_docling, _binary_hash_u64
 from docling_core.types.doc import DoclingDocument, ImageRef
@@ -394,6 +427,10 @@ for i, d in enumerate(tqdm(benchmark_samples.to_dict(orient="records"))):
     html_path = os.path.join(html_out_dir, f"{doc.name}.html")
     with open(html_path, "w", encoding="utf-8") as f:
         f.write(sample_html)
+        
+    doctag_path = os.path.join(doctags_out_dir, f"{doc.name}.json")
+    with open(doctag_path, "w", encoding="utf-8") as f:
+        json.dump(tags, f, indent=2, ensure_ascii=False)
 
 out_path = os.path.join(output_dir, "omnidocbench.json")
 with open(out_path, "w", encoding="utf-8") as f:

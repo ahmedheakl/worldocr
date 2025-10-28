@@ -5,15 +5,15 @@ from tqdm import tqdm
 from pathlib import Path
 
 # ------------ Paths ------------
-input_dir = Path('../data/omnidocbench_output_med/images')
-output_dir = Path('../data/predictions_med/qwen3vl2b-lorav4')
+input_dir = Path('../data/omnidocbench_output_med/cleaned_images')
+output_dir = Path('../data/predictions_med/qwen25vl3b-lorav1')
 output_dir.mkdir(parents=True, exist_ok=True)
 import torch
 num_devices = torch.cuda.device_count() if torch.cuda.is_available() else 1
 print("="*15, f"Using {num_devices} device(s) for inference.", "="*15)
 # ------------ Model ------------
 # MODEL_NAME = "Qwen/Qwen3-VL-2B-Instruct"
-MODEL_NAME = "../checkpoints/qwen3vl-2b-v4/merged_model"
+MODEL_NAME = "../checkpoints/qwen25vl-3b-v1/merged_model"
 # MODEL_NAME = "Qwen/Qwen2.5-VL-3B-Instruct"
 max_len=16384
 llm = LLM(
