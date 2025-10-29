@@ -61,4 +61,3 @@ for idx, row in enumerate(tqdm(ds)):
         img.save(image_path)   
     with open(os.path.join(visualizations_out_dir, f"{doc.name}_{idx}.md"), "w", encoding="utf-8") as f:
         f.write(row["doctag_html"])
-        

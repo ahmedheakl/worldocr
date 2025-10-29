@@ -1,50 +1,32 @@
-# PYTHONPATH=.. python to_traindata.py --ds_name worldocr_v6 --format markdown
+# PYTHONPATH=.. python to_components.py --ds_name worldocr_v6
 import os
-import json
 from glob import glob
 from io import BytesIO
-
+import json
+import sys
+import random
 import pandas as pd
 from PIL import Image
 from tqdm import tqdm
-from docling_core.types.doc import DoclingDocument
-
-from to_json_doctags import parse_doctag_to_docling, _binary_hash_u64, to_markdown
+from to_json_doctags import parse_doctag_to_docling, _binary_hash_u64
+from check_layout import infer_quality
+from filtered_colored import is_colorized_overlay_page
 from argparse import ArgumentParser
+from docling_core.types.doc import DoclingDocument, TableItem, TextItem, GroupItem
+from docling_core.transforms.serializer.markdown import MarkdownListSerializer
+from docling_core.transforms.serializer.markdown import MarkdownDocSerializer, MarkdownParams
+from docling_core.types.doc.document import DOCUMENT_TOKENS_EXPORT_LABELS, DEFAULT_CONTENT_LAYERS
+from docling_core.types.doc.base import BoundingBox
 
-DOCTAGS_PROMPT = "Convert this page to docling."
-MARKDOWN_PROMPT = r'''You are an AI assistant specialized in converting PDF images to Markdown format. Please follow these instructions for the conversion:
 
-1. Text Processing:
-- Accurately recognize all text content in the PDF image without guessing or inferring.
-- Convert the recognized text into Markdown format.
-- Maintain the original document structure, including headings, paragraphs, lists, etc.
-
-2. Mathematical Formula Processing:
-- Convert all mathematical formulas to LaTeX format.
-- Enclose inline formulas with \( \). For example: This is an inline formula \( E = mc^2 \)
-- Enclose block formulas with \[ \]. For example: \[ \frac{-b \pm \sqrt{b^2 - 4ac}}{2a} \]
-
-3. Table Processing:
-- Convert tables to HTML format.
-- Wrap the entire table with <table> and </table>.
-
-4. Figure Handling:
-- Ignore figures content in the PDF image. Do not attempt to describe or convert images.
-
-5. Output Format:
-- Ensure the output Markdown document has a clear structure with appropriate line breaks between elements.
-- For complex layouts, try to maintain the original document's structure and format as closely as possible.
-
-Please strictly follow these guidelines to ensure accuracy and consistency in the conversion. Your task is to accurately convert the content of the PDF image into Markdown format without adding any extra explanations or comments.
-'''
+MARKDOWN_PROMPT = "Convert the following {tag} to {target_format}."
 data_root = "../data/train2"
 files = glob(f"{data_root}/*.parquet")
+files = random.sample(files, k=50)
 
 out_root = "data"
 parser = ArgumentParser()
-parser.add_argument("--ds_name", type=str, default="worldocr_v7")
-parser.add_argument("--format", type=str, default="doctags", choices=["doctags", "markdown"])
+parser.add_argument("--ds_name", type=str, default="worldocr_comp_v1")
 parser.add_argument("--max_samples_per_language", type=int, default=1000)
 args = parser.parse_args()
 ds_name = args.ds_name
@@ -55,9 +37,7 @@ out_annots = f"{out_root}/dataset_info.json"
 
 os.makedirs(out_images, exist_ok=True)
 
-def curate_sample(rel_image_path, content, prompt=DOCTAGS_PROMPT):
-    if args.format == "markdown":
-        content = f"```markdown\n{content}\n```"
+def curate_sample(rel_image_path, content: str, prompt: str):
     return {
         "messages": [
             {"role": "user", "content": "<image>"+prompt},
@@ -69,6 +49,52 @@ def curate_sample(rel_image_path, content, prompt=DOCTAGS_PROMPT):
 data = []
 append = data.append  # micro-opt
 
+def merge_bboxes(bboxes):
+    l = min(bbox.l for bbox in bboxes)
+    t = min(bbox.t for bbox in bboxes)
+    r = max(bbox.r for bbox in bboxes)
+    b = max(bbox.b for bbox in bboxes)
+    return BoundingBox(l=l, t=t, r=r, b=b)
+
+def parse_table(item: TableItem, doc: DoclingDocument, **kwargs):
+    bbox = item.prov[0].bbox
+    if len(item.children) > 0: 
+        childern_elements = [child.resolve(doc) for child in item.children]
+        childern_bboxes = [child.prov[0].bbox for child in childern_elements if len(child.prov) > 0]
+        childern_bboxes.append(bbox)
+        bbox = merge_bboxes(childern_bboxes)
+    return item.export_to_html(doc=doc), bbox
+
+def parse_text(item: TextItem, **kwargs):
+    return item.text, item.prov[0].bbox
+
+def parse_group(item: GroupItem, doc: DoclingDocument, **kwargs):
+    list_seralizer = MarkdownListSerializer()
+    serializer = MarkdownDocSerializer(
+        doc=doc,
+        params=MarkdownParams(
+            labels=DOCUMENT_TOKENS_EXPORT_LABELS,
+            layers=DEFAULT_CONTENT_LAYERS,
+            pages=None,
+            start_idx=0,
+            stop_idx=sys.maxsize,
+            escape_html=True,
+            escape_underscores=True,
+            image_placeholder="<!-- image -->",
+            enable_chart_tables=True,
+            image_mode="placeholder",
+            indent=4,
+            wrap_width=None,
+            page_break_placeholder=None,
+            include_annotations=True,
+            mark_annotations=False,
+        ),
+    )
+    _ = serializer.serialize()
+    content = list_seralizer.serialize(item=item, doc_serializer=serializer, doc=doc)
+    bbox = merge_bboxes([b.item.prov[0].bbox for b in content.spans])
+    content = content.text
+    return content, bbox
 
 num_samples_per_language = {}
 all_dfs = []
@@ -78,11 +104,12 @@ for file in tqdm(files, desc="Loading Parquet files"):
 df = pd.concat(all_dfs, ignore_index=True)
 del all_dfs
 df = df.sample(frac=1, random_state=42).reset_index(drop=True)
+def bbox_area(bbox):
+    return (bbox.r - bbox.l) * (bbox.b - bbox.t)
 
-# def get_components(doc):
-    
-
-
+# from qwen2.5-vl configs
+MIN_PIXELS = 3136
+MAX_PIXELS = 12845056
 for row in tqdm(df.itertuples(index=False, name="Row"), desc=f"Building ...", total=len(df), leave=False):
     page_id = getattr(row, "id")
     page_image = getattr(row, "image")
@@ -94,36 +121,77 @@ for row in tqdm(df.itertuples(index=False, name="Row"), desc=f"Building ...", to
     
     if language not in num_samples_per_language:
         num_samples_per_language[language] = 0
-    num_samples_per_language[language] += 1
-    if num_samples_per_language[language] > max_samples_per_language:
-        continue
-
+    if num_samples_per_language[language] > max_samples_per_language: continue
+    if len(data) % 1000 == 0 and len(data) > 0: print(f"Processed sample {len(data)}", flush=True)
     try:
         image_filename = f"{page_id}.png"
         image_path = os.path.join(out_images, image_filename)
 
         img_bytes = page_image.get("bytes")
+        pseudo_path = page_image.get("path")
+        import tempfile
+        with tempfile.TemporaryDirectory() as tmpdirname:
+            temp_image_path = os.path.join(tmpdirname, "temp_image")
+            with open(temp_image_path, "wb") as temp_img_f:
+                temp_img_f.write(img_bytes)
+            if "highres" not in pseudo_path and is_colorized_overlay_page(temp_image_path):
+                continue
         with Image.open(BytesIO(img_bytes)) as image:
             image_meta_data = {
-                "path": page_image.get("path"),
+                "path": pseudo_path,
                 "binary_hash": _binary_hash_u64(img_bytes),
                 "width": image.width,
                 "height": image.height,
             }
-
+            if "caption" not in doctag_html: continue
             doc_dict = parse_doctag_to_docling(doctag_html, image_meta_data, page_id)
-            if args.format == "markdown":
-                tags = to_markdown(doc_dict)
-                prompt = MARKDOWN_PROMPT
-            else:
-                doc = DoclingDocument.model_validate(doc_dict)
-                tags = doc.export_to_doctags()
-                prompt = DOCTAGS_PROMPT
+            quality_score = infer_quality(image, doc_dict)
+            
+            if quality_score < 0.85: 
+                continue
+            doc = DoclingDocument.model_validate(doc_dict)
+            for text_element in doc.texts:
+                if "body" not in str(text_element.parent): continue
+                label = text_element.label.value
+                content, bbox = parse_text(text_element)
+                if bbox_area(bbox) > MAX_PIXELS or bbox_area(bbox) < MIN_PIXELS: continue
+                text_id = "_".join(text_element.self_ref.split("/")[1:])
+                image_cropped = image.crop((bbox.l, bbox.t, bbox.r, bbox.b))
+                out_image_path = os.path.join(out_images, f"{page_id}_{text_id}.png")
+                image_cropped.save(out_image_path)
+                rel_path = os.path.relpath(out_image_path, out_root)
+                prompt = MARKDOWN_PROMPT.format(tag=label, target_format="markdown")
+                append(curate_sample(rel_path, content, prompt=prompt))
+                
+            for table_element in doc.tables:
+                label = table_element.label.value
+                content, bbox = parse_table(table_element, doc)
+                if bbox_area(bbox) > MAX_PIXELS or bbox_area(bbox) < MIN_PIXELS: continue
+                text_id = "_".join(table_element.self_ref.split("/")[1:])
+                image_cropped = image.crop((bbox.l, bbox.t, bbox.r, bbox.b))
+                out_image_path = os.path.join(out_images, f"{page_id}_{text_id}.png")
+                image_cropped.save(out_image_path)
+                rel_path = os.path.relpath(out_image_path, out_root)
+                prompt = MARKDOWN_PROMPT.format(tag=label, target_format="html")
+                append(curate_sample(rel_path, content, prompt=prompt))
+            
+            for group_element in doc.groups:
+                if group_element.content_layer.value == "furniture": continue
+                label = group_element.label.value
+                content, bbox = parse_group(group_element, doc)
+                if bbox_area(bbox) > MAX_PIXELS or bbox_area(bbox) < MIN_PIXELS: continue
+                text_id = "_".join(group_element.self_ref.split("/")[1:])
+                image_cropped = image.crop((bbox.l, bbox.t, bbox.r, bbox.b))
+                out_image_path = os.path.join(out_images, f"{page_id}_{text_id}.png")
+                image_cropped.save(out_image_path)
+                rel_path = os.path.relpath(out_image_path, out_root)
+                prompt = MARKDOWN_PROMPT.format(tag=label, target_format="markdown")
+                append(curate_sample(rel_path, content, prompt=prompt))
+                
             with open(image_path, "wb") as img_f:
                 img_f.write(img_bytes)
-
-        rel_path = os.path.relpath(image_path, out_root)
-        append(curate_sample(rel_path, tags, prompt=prompt))
+                
+        num_samples_per_language[language] += 1
 
     except Exception as e:
         print(f"Error processing page {page_id} in {os.path.basename(file)}: {e}", flush=True)
