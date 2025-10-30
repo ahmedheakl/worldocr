@@ -23,3 +23,4 @@ MARKDOWN_PROMPT = r'''You are an AI assistant specialized in converting PDF imag
 
 Please strictly follow these guidelines to ensure accuracy and consistency in the conversion. Your task is to accurately convert the content of the PDF image into Markdown format without adding any extra explanations or comments.
 '''
+DOCTAGS_PROMPT = "Convert this page to docling."

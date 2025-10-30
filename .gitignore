@@ -5,6 +5,7 @@ __pycache__/
 data
 setup.sh
 checkpoints
+logs
 
 # C extensions
 *.so

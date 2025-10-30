@@ -29,7 +29,7 @@ def main(args):
 
     
 if __name__ == "__main__":
-    base_model_path = "ibm-granite/granite-docling-258M"
+    base_model_path = "Qwen/Qwen2.5-VL-3B-Instruct"
     lora_path = "../checkpoints/granitedocling2b-v2-lora16"
     parser = ArgumentParser(description="Merge LoRA adapter into base model")
     parser.add_argument("--base_model", type=str, default=base_model_path, help="Path to the base model")
