@@ -11,14 +11,16 @@ from PIL import Image
 from docling_core.types.doc import DoclingDocument
 from docling_core.types.doc.document import DocTagsDocument
 from tqdm import tqdm
+from argparse import ArgumentParser
 
 from to_json_doctags import to_markdown
 
+parser = ArgumentParser()
+parser.add_argument("--input_dir", type=str, default="../data/omnidocbench_output_mega/images")
+parser.add_argument("--output_dir", type=str, default="../data/predictions_mega/smoldocling")
+parser.add_argument("--model_path", type=str, default="ds4sd/SmolDocling-256M-preview")
+args = parser.parse_args()
 
-# MODEL_PATH = "ibm-granite/granite-docling-258M"
-MODEL_PATH = "/l/users/ahmed.heakl/worldocr/checkpoints/granitedocling2b-v2"
-INPUT_DIR = Path("../data/omnidocbench_output_med/cleaned_images")
-OUTPUT_DIR = Path("../data/predictions_med/docling-granite-sft")
 PROMPT_TEXT = "Convert this page to docling."
 
 messages = [
@@ -30,22 +32,22 @@ messages = [
         ],
     },
 ]
-
-# Ensure output directory exists
-OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+output_dir = Path(args.output_dir)
+input_dir = Path(args.input_dir)
+output_dir.mkdir(parents=True, exist_ok=True)
 
 # Collect images (recursively), deterministic order
 valid_exts = {".png", ".jpg", ".jpeg"}
 img_paths = sorted(
-    [p for p in INPUT_DIR.rglob("*") if p.suffix.lower() in valid_exts]
+    [p for p in input_dir.rglob("*") if p.suffix.lower() in valid_exts]
 )
 
 if not img_paths:
-    raise SystemExit(f"No images found in {INPUT_DIR} with extensions {sorted(valid_exts)}.")
+    raise SystemExit(f"No images found in {input_dir} with extensions {sorted(valid_exts)}.")
 
 # Initialize LLM & processor
-llm = LLM(model=MODEL_PATH, revision="untied", limit_mm_per_prompt={"image": 1})
-processor = AutoProcessor.from_pretrained(MODEL_PATH)
+llm = LLM(model=args.model_path, limit_mm_per_prompt={"image": 1}, gpu_memory_utilization=0.8)
+processor = AutoProcessor.from_pretrained(args.model_path)
 
 sampling_params = SamplingParams(
     temperature=0.0,
@@ -66,14 +68,14 @@ for i in range(0, len(img_paths), batch_size):
 
         prompt = processor.apply_chat_template(messages, add_generation_prompt=True)
         batched_inputs.append({"prompt": prompt, "multi_modal_data": {"image": image}})
-        rel = img_path.relative_to(INPUT_DIR)
+        rel = img_path.relative_to(input_dir)
         stem = rel.as_posix().rsplit(".", 1)[0].replace("/", "__")
         output_stems.append(stem)
 
     outputs = llm.generate(batched_inputs, sampling_params=sampling_params)
     for stem, output, input_data in tqdm(zip(output_stems, outputs, batched_inputs), desc="Saving outputs", total=len(in_img_paths)):
         doctags = output.outputs[0].text
-        md_path = OUTPUT_DIR / f"{stem}.md"
+        md_path = output_dir / f"{stem}.md"
         doctags_doc = DocTagsDocument.from_doctags_and_image_pairs(
             [doctags],
             [input_data["multi_modal_data"]["image"]],
@@ -83,4 +85,4 @@ for i in range(0, len(img_paths), batch_size):
         md_path.write_text(markdown, encoding="utf-8")
 
     print(f"Processed {len(in_img_paths)} images.")
-    print(f"Markdown saved to: {OUTPUT_DIR.resolve()}")
+    print(f"Markdown saved to: {output_dir.resolve()}")

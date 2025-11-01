@@ -5,18 +5,17 @@
 #SBATCH --qos cscc-gpu-qos
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=32
-#SBATCH --gres=gpu:4
+#SBATCH --gres=gpu:2
 #SBATCH --nodes=1
-#SBATCH --exclude=gpu-05
 #SBATCH --time=48:00:00
 #SBATCH --partition=cscc-gpu-p
-#SBATCH --mem=100GB
+#SBATCH --mem=80GB
 
 
 # create a fake script the keep sleep for the whole duration, 3 days job, with 4 gpus and 1 node, with 100GBs memory
 
 # conda activate worldocr
-cd /l/users/ahmed.heakl/worldocr/LLaMA-Factory
-bash train.sh
+cd /l/users/ahmed.heakl/worldocr
+bash stall.sh
 
 

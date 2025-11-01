@@ -1,7 +1,7 @@
 import json
 import matplotlib.pyplot as plt
 
-with open("data/omnidocbench_output_large/omnidocbench_v2.json", "r") as f:
+with open("data/omnidocbench_output_mega/omnidocbench.json", "r") as f:
     data = json.load(f)
     
 languages = []

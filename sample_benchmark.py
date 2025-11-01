@@ -26,17 +26,17 @@ from check_layout import infer_quality
 # Step 1: Load and concatenate all parquet files
 # --------------------------------------------
 files = glob("data/train2/*.parquet")
-random.seed(42)
-files = random.sample(files, k=50)  
+# random.seed(42)
+# files = random.sample(files, k=50)  
 # files = files[10:15]
 all_dfs = [pd.read_parquet(f) for f in tqdm(files, desc="Loading parquet files")]
 df = pd.concat(all_dfs, ignore_index=True)
-# filter_langs = ["ru", "en", "pl", "es", "fr", "uk", "it", "sr", "hr", "bg", "ja", "cs", "ro", "de", "pt", "zh", "nl", "vi", "el", "hu", "tr"]
+filter_langs = ["ru", "en", "pl", "es", "fr", "uk", "it", "sr", "hr", "bg", "ja", "cs", "ro", "de", "pt", "zh", "nl", "vi", "el", "hu", "tr"]
 del all_dfs
-# df = df[df['language'].isin(filter_langs)].reset_index(drop=True)
-df = df[df['doctag_html'].str.contains("<equation>", na=False)].reset_index(drop=True)
+df = df[df['language'].isin(filter_langs)].reset_index(drop=True)
+# df = df[df['doctag_html'].str.contains("<equation>", na=False)].reset_index(drop=True)
 # df = df[df['id'].str.contains("doc_253edfcda9b18f792bd63a9ec22d9e98775fbba6_p00005")].reset_index(drop=True)
-output_dir = "data/omnidocbench_output_top"
+output_dir = "data/omnidocbench_output_ultra"
 os.makedirs(output_dir, exist_ok=True) 
 images_out_dir = os.path.join(output_dir, "images")
 os.makedirs(images_out_dir, exist_ok=True)
