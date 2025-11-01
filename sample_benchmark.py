@@ -1,27 +1,53 @@
-import pandas as pd
-import numpy as np
 from glob import glob
 from tqdm import tqdm
-from bs4 import BeautifulSoup
-from PIL import Image
+import tempfile
+import random
 import re
 import os
 import json
-import io
-from to_json_doctags import to_markdown
+from multiprocessing import Pool
+import math
+import base64
+
+from docling_core.types.doc import DoclingDocument, ImageRef, DocTagsDocument
+from io import BytesIO
+from bs4 import BeautifulSoup
+from PIL import Image
+import pandas as pd
+import numpy as np
+import pycountry
+
 from filtered_colored import is_colorized_overlay_page
-import tempfile
-import random
+from to_json_doctags import parse_doctag_to_docling, _binary_hash_u64, to_markdown
+from check_layout import infer_quality
+
 
 # --------------------------------------------
 # Step 1: Load and concatenate all parquet files
 # --------------------------------------------
 files = glob("data/train2/*.parquet")
-files = random.sample(files, k=10)  # limit to 500 files for memory reasons
-all_dfs = [pd.read_parquet(f) for f in tqdm(files)]
+random.seed(42)
+files = random.sample(files, k=10)  
+# files = files[10:15]
+all_dfs = [pd.read_parquet(f) for f in tqdm(files, desc="Loading parquet files")]
 df = pd.concat(all_dfs, ignore_index=True)
 filter_langs = ["ru", "en", "pl", "es", "fr", "uk", "it", "sr", "hr", "bg", "ja", "cs", "ro", "de", "pt", "zh", "nl", "vi", "el", "hu", "tr"]
 del all_dfs
+df = df[df['language'].isin(filter_langs)].reset_index(drop=True)
+# df = df[df['doctag_html'].str.contains("caption", na=False)].reset_index(drop=True)
+# df = df[df['id'].str.contains("doc_253edfcda9b18f792bd63a9ec22d9e98775fbba6_p00005")].reset_index(drop=True)
+output_dir = "data/omnidocbench_output_mega"
+os.makedirs(output_dir, exist_ok=True) 
+images_out_dir = os.path.join(output_dir, "images")
+os.makedirs(images_out_dir, exist_ok=True)
+visualizations_out_dir = os.path.join(output_dir, "visualizations")
+os.makedirs(visualizations_out_dir, exist_ok=True)
+markdowns_out_dir = os.path.join(output_dir, "markdowns")
+os.makedirs(markdowns_out_dir, exist_ok=True)
+html_out_dir = os.path.join(output_dir, "htmls")
+os.makedirs(html_out_dir, exist_ok=True)
+doctags_out_dir = os.path.join(output_dir, "doctags")
+os.makedirs(doctags_out_dir, exist_ok=True)
 
 vital_tags = {
     'equation': 10,
@@ -44,17 +70,7 @@ vital_tags = {
     'footnote': 5,
 }
 
-# TODO: 
-# 1. remove table_header
-# 2. remove form_tag
-# 3. convert annotation to text
-# 4. if the element before table_caption is a figure, convert the tag name from table_caption to figure_caption
-
-# remove any <table_header><loc_{l1}><loc_{l2}>...<loc_{ln}></table_header> pattern from the from columns ['doctag_html', 'doctag_otsl']
-# remove any <form_tag><loc_{l1}><loc_{l2}>...<loc_{ln}></form_tag> pattern from the ['doctag_html', 'doctag_otsl']
 def clean_doctag_columns(doctag: str) -> str:
-    import re
-
     # 1) remove blocks
     doctag = re.sub(r"(?is)<\s*table_header\b[^>]*>.*?</\s*table_header\s*>", "", doctag)
     doctag = re.sub(r"(?is)<\s*form_tag\b[^>]*>.*?</\s*form_tag\s*>", "", doctag)
@@ -69,7 +85,7 @@ def clean_doctag_columns(doctag: str) -> str:
 
     def nearest_struct_type(start_idx: int, end_idx: int):
         """Return 'figure', 'table', or None based on nearest structural tag around [start_idx, end_idx)."""
-        import math
+        
         best_type, best_dist = None, math.inf
 
         # nearest previous
@@ -148,7 +164,6 @@ def sample_normal_distribution(group: pd.DataFrame, n_samples: int = 30):
 # Step 3: Apply per-language sampling
 # --------------------------------------------
 # filter out samples with colorized overlay pages
-from multiprocessing import Pool, cpu_count
 
 def check_colorized_single(args):
     """Helper function for parallel processing."""
@@ -179,15 +194,11 @@ def filter_colorized_overlay(df: pd.DataFrame) -> pd.DataFrame:
     filtered_df = df.drop(index=filtered_indices).reset_index(drop=True)
     return filtered_df
 
-# filter with low quality score
-from check_layout import infer_quality
-from to_json_doctags import parse_doctag_to_docling
-
 def check_quality(args):
     """Helper function for parallel processing."""
     idx, doctag_html, image = args
     tags = parse_doctag_to_docling(doctag_html, {}, 0)
-    image = Image.open(io.BytesIO(bytes(image['bytes']))).convert("RGB")
+    image = Image.open(BytesIO(bytes(image['bytes']))).convert("RGB")
     quality = infer_quality(image, tags)
     if quality < 0.9: return idx
 
@@ -226,26 +237,93 @@ print("✅ Benchmark created with", len(benchmark_samples), "samples across",
 def extract_poly(text):
     """Extract bounding box from <loc_*> tags and return polygon with 4 corners."""
     coords = re.findall(r"<loc_(\d+)>", text)
-    nums = [int(c) for c in coords]
-    if len(nums) == 4:
-        x0, y0, x1, y1 = nums
-        return [x0, y0, x1, y0, x1, y1, x0, y1]  # expand bbox to polygon
-    if len(nums) == 8:
-        return nums  # already polygon
-    return None
+    nums = [int(c) for c in coords][:4]
+    x0, y0, x1, y1 = nums
+    return [x0, y0, x1, y0, x1, y1, x0, y1]  # expand bbox to polygon
 
 
 def clean_text(text):
     """Remove <loc_*> tags and trim whitespace."""
-    return re.sub(r"<loc_\d+>", "", text).strip()
+    text = re.sub(r"<loc_\d+>", "", text).strip()
+    text = re.sub(r"</loc_\d+>", "", text).strip()
+    return text
 
-def get_table(text):
-    soup = BeautifulSoup(text, "html.parser")
-    tables = soup.find_all("table")
-    if not tables:
-        return ""
-    # The innermost/actual table is usually the last one
-    return str(tables[-1])
+def get_table(element):
+    data = str(element)
+    doc = DocTagsDocument.from_doctags_and_image_pairs(["<doctag>"+data+"</doctag>"], [None])
+    t = DoclingDocument.load_from_doctags(doc)
+    html = t.export_to_html()
+    soup = BeautifulSoup(html, "html.parser")
+    table = str(soup.find("table"))
+    caption_data = None
+    if "<caption>" in table:
+        table = re.sub(r"<caption>.*?</caption>", "", table, flags=re.DOTALL)
+        caption_match = re.search(r"<caption>(.*?)</caption>", data, re.DOTALL)
+        caption_html = caption_match.group(1)
+        caption_bbox = extract_poly(caption_html)
+        caption_text = clean_text(caption_html)
+        caption_data = (caption_text, caption_bbox)
+    return table, caption_data
+
+def get_picture_caption(element):
+    data = str(element)
+    caption_match = re.search(r"<caption>(.*?)</caption>", data, re.DOTALL)
+    caption_html = caption_match.group(1)
+    caption_bbox = extract_poly(caption_html)
+    caption_text = clean_text(caption_html)
+    return caption_text, caption_bbox    
+        
+
+def get_list(element, order, annot_id, attributes):
+    items = []
+    full_text = ""
+    order_update, annot_id_update = order, annot_id
+    list_ploys = []
+    for item in element.find_all("list_item"):
+        raw = str(item)
+        poly = extract_poly(raw)
+        if poly is None: continue
+        list_ploys.extend(poly)
+        inner = clean_text(item.get_text())
+        full_text += inner + "\n"
+        items.append({
+            "category_type": "text_block",
+            "poly": poly,
+            "ignore": False,
+            "order": order,
+            "anno_id": annot_id,
+            "attribute": attributes,
+            "text": inner,
+            "line_with_spans": [],
+        })
+        annot_id += 1
+        order += 1
+    order_update = order - order_update
+    annot_id_update = annot_id - annot_id_update
+    list_ploy = [min(list_ploys[0::2]), min(list_ploys[1::2]), max(list_ploys[0::2]), max(list_ploys[1::2])]
+    list_ploy = [list_ploy[0], list_ploy[1], list_ploy[2], list_ploy[1], list_ploy[2], list_ploy[3], list_ploy[0], list_ploy[3]]
+    return items, order_update, annot_id_update, full_text.strip(), list_ploy
+
+
+def curate_block(category, poly, text, order, anno_id, attributes, merge_list=[], html=""):
+    block = {
+        "category_type": category,
+        "poly": poly,
+        "ignore": False,
+        "order": order,
+        "anno_id": anno_id,
+        "attribute": attributes,
+        "line_with_spans": [],
+        "merge_list": merge_list
+    }
+    if text:
+        block["text"] = text
+    if html:
+        block["html"] = html
+    if category in ["figure"]:
+        del block["line_with_spans"], block['attribute'], block['merge_list']
+        if text: del block['text']
+    return block
 
 def parse_doctag(html_str, start_order=0, start_id=0, language="unknown"):
     """
@@ -258,57 +336,110 @@ def parse_doctag(html_str, start_order=0, start_id=0, language="unknown"):
 
     # Parse doctag XML
     soup = BeautifulSoup(html_str, "html.parser")
-    target_elements = [f"section_header_level_{i}" for i in range(1, 10)]
-    target_elements += ["text", "list", "table", "table_caption", "figure_caption", "eqution", "header"]
-    for element in soup.find_all(["text", "list", "table",
-                                  "section_header_level_1",
-                                  "section_header_level_2",
-                                  "section_header_level_3"]):
+    target_elements = [f"section_header_level_{level}" for level in range(1, 10)]
+    target_elements += ["text", "picture", "page_footer", "page_header", "unordered_list", "title", "otsl"]
+    for element in soup.find_all(target_elements):
+        if "loc_" in element.name: continue
         raw = str(element)
-        poly = extract_poly(raw)
+        
+        attributes = {
+            "text_language": f"text_{language}",
+            "text_background": "white",
+            "text_rotate": "normal"
+        }
+        if element.name == "unordered_list":
+            merge_list, order_update, anno_id_update, inner, poly = get_list(element, order+1, anno_id+1, attributes)
+            order_update += 1
+            anno_id_update += 1
+        else:
+            inner = clean_text(element.get_text())
+            merge_list = []
+            order_update, anno_id_update = 1, 1
+            poly = extract_poly(raw)
         if poly is None: continue
-        inner = clean_text(element.get_text())
 
-        if element.name.startswith("section_header_level"):
-            category = "section_header"
-        elif element.name == "list":
-            category = "list_item"
-        elif element.name == "text":
-            category = "text_block"
-        elif element.name == "table":
+        if element.name == "title":
+            category = "title"
+        elif element.name in "page_header":
+            category = "header"
+        elif element.name == "page_footer":
+            category = "footer"
+        elif element.name == "picture":
+            category = "figure"
+        elif element.name in ["table", "otsl"]:
             category = "table"
         else:
             category = "text_block"
 
         text = inner if category not in ["table"] else ""
-        html = get_table(raw) if category == "table" else ""
-        block = {
-            "category_type": category,
-            "poly": poly,
-            "ignore": False,
-            "order": order,
-            "anno_id": anno_id,
-            "attribute": {
-                "text_language": f"text_{language}",
-                "text_background": "white",
-                "text_rotate": "normal"
-            },
-            "line_with_spans": [],
-            "merge_list": []
-        }
-        if text:
-            block["text"] = text
-        if html:
-            block["html"] = html
-
+        html = ""
+        add_later = False
+        caption_data = None
+        if category == "table":
+            html, caption_data = get_table(raw)
+            if caption_data:
+                caption_text, caption_bbox = caption_data
+                # check if caption_bbox is lower than table bbox, then add later
+                if caption_bbox[1] >= poly[5]: add_later = True
+                else:
+                    caption_block = curate_block(
+                        "table_caption",
+                        caption_bbox,
+                        caption_text,
+                        order,
+                        anno_id,
+                        attributes
+                    )
+                    layout_dets.append(caption_block)
+                    order += 1
+                    anno_id += 1
+        if category == "figure" and "<caption>" in raw:
+            caption_data = get_picture_caption(raw)
+            caption_text, caption_bbox = caption_data
+            if caption_bbox[1] >= poly[5]: add_later = True
+            else:
+                caption_block = curate_block(
+                    "figure_caption",
+                    caption_bbox,
+                    caption_text,
+                    order,
+                    anno_id,
+                    attributes
+                )
+                layout_dets.append(caption_block)
+                order += 1
+                anno_id += 1
+        block = curate_block(
+            category,
+            poly,
+            text,
+            order,
+            anno_id,
+            attributes,
+            merge_list,
+            html
+        )
         layout_dets.append(block)
-        order += 1
-        anno_id += 1
+        order += order_update
+        anno_id += anno_id_update
+        
+        if add_later and caption_data:
+            caption_text, caption_bbox = caption_data
+            caption_block = curate_block(
+                f"{category}_caption",
+                caption_bbox,
+                caption_text,
+                order,
+                anno_id,
+                attributes
+            )
+            layout_dets.append(caption_block)
+            order += 1
+            anno_id += 1
 
     return layout_dets, order, anno_id
 
 def to_lang(code):
-    import pycountry
     language = pycountry.languages.get(alpha_2=code)
     if language: return language.name
     return "Unknown language code"
@@ -348,23 +479,28 @@ def convert_page(page_number, img_size, img_path, html_doc, language):
         "extra": extra
     }
 
-output_dir = "data/omnidocbench_output_large"
-os.makedirs(output_dir, exist_ok=True) 
-images_out_dir = os.path.join(output_dir, "images")
-os.makedirs(images_out_dir, exist_ok=True)
-visualizations_out_dir = os.path.join(output_dir, "visualizations")
-os.makedirs(visualizations_out_dir, exist_ok=True)
-markdowns_out_dir = os.path.join(output_dir, "markdowns")
-os.makedirs(markdowns_out_dir, exist_ok=True)
-html_out_dir = os.path.join(output_dir, "htmls")
-os.makedirs(html_out_dir, exist_ok=True)
-doctags_out_dir = os.path.join(output_dir, "doctags")
-os.makedirs(doctags_out_dir, exist_ok=True)
-converted = []
-from to_json_doctags import parse_doctag_to_docling, _binary_hash_u64
-from docling_core.types.doc import DoclingDocument, ImageRef
-from io import BytesIO
 
+def filter_tags(tags):
+    to_remove = []
+    for ref_id in tags['body']['children']:
+        for element in tags['texts']:
+            if element['self_ref'] != ref_id: continue
+            if element['label'] != 'caption': continue
+            cur_text = element['text']
+            for text_element in tags['texts']:
+                if cur_text in text_element['text']: to_remove.append(ref_id); break
+            break
+        
+    tags['body']['children'] = [cid for cid in tags['body']['children'] if cid not in to_remove]
+    tags['texts'] = [t for t in tags['texts'] if t['self_ref'] not in to_remove]
+    for table in tags['tables']:
+        table['children'] = [cid for cid in table['children'] if cid not in to_remove]
+    for picture in tags['pictures']:
+        picture['children'] = [cid for cid in picture['children'] if cid not in to_remove]
+    return tags
+            
+
+converted = []
 for i, d in enumerate(tqdm(benchmark_samples.to_dict(orient="records"))):
     page_id = d['id']
     sample_image = d['image']
@@ -373,7 +509,7 @@ for i, d in enumerate(tqdm(benchmark_samples.to_dict(orient="records"))):
     if sample_lang not in filter_langs:
         continue
     img_bytes = sample_image.get("bytes")
-    image = Image.open(BytesIO(bytes(img_bytes)))
+    image = Image.open(BytesIO(bytes(img_bytes))).convert("RGB")
     image_meta_data = {
         "path": sample_image.get("path"),
         "binary_hash": _binary_hash_u64(bytes(img_bytes)),
@@ -381,17 +517,15 @@ for i, d in enumerate(tqdm(benchmark_samples.to_dict(orient="records"))):
         "height": image.height
     }
     tags = parse_doctag_to_docling(sample_html, image_meta_data, i)
+    tags = filter_tags(tags)
     doc = DoclingDocument.model_validate(tags)
     def pil_image_to_data_uri(image: Image.Image, format: str = "JPEG") -> str:
         """Convert a PIL Image to a data URI."""
-        from io import BytesIO
-        import base64
-
         buffered = BytesIO()
         image.save(buffered, format=format)
         img_str = base64.b64encode(buffered.getvalue()).decode("utf-8")
         return f"data:image/{format.lower()};base64,{img_str}"
-    sample_image = Image.open(io.BytesIO(sample_image['bytes'])).convert("RGB")
+    sample_image = image
     doc.pages[1].image = ImageRef(
         mimetype="image/jpeg",
         dpi=300,
@@ -405,30 +539,37 @@ for i, d in enumerate(tqdm(benchmark_samples.to_dict(orient="records"))):
         viz_mode="reading_order",      # "reading_order" | "key_value"
         show_cell_id=True             # for key_value viz
     )
-    for i, img in imgs_by_page.items():
-        image_path = os.path.join(visualizations_out_dir, f"{doc.name}.jpg")
-        img.save(image_path)   
-        
-    markdown_path = os.path.join(markdowns_out_dir, f"{doc.name}.md")
-    markdown = to_markdown(tags)
-    with open(markdown_path, "w", encoding="utf-8") as f:
-        f.write(markdown)
-    # doc.save_as_markdown(markdown_path)
-    
-    
+    try:
+        html = doc.export_to_doctags(xsize=sample_image.width, ysize=sample_image.height)
+    except Exception as e:
+        print(f"❌ Error converting page {page_id} to doctags: {e}")
+        continue
     page_number = page_id.split("_")[-1]
     page_number = int(re.findall(r'\d+', page_number)[0])
     new_img_path = os.path.join(images_out_dir, f"{page_id}.jpg")
-    sample_image.save(new_img_path)
     img_path = os.path.relpath(new_img_path, output_dir)
-    page_obj = convert_page(page_number, (sample_image.width, sample_image.height), img_path, sample_html, sample_lang)
+    page_obj = convert_page(page_number, (sample_image.width, sample_image.height), img_path, html, sample_lang)
+    all_texts_empty = all(
+        (anno['category_type'] in ['text_block', 'title', 'header', 'footer'] and not anno.get('text', '').strip()) or 
+        (anno['category_type'] == 'table' and not anno.get('html', '').strip()) for anno in page_obj['layout_dets'])
+    if all_texts_empty:
+        print(f"❌ Error in page {page_id}: no text or latex.")
+        continue
+    for i, img in imgs_by_page.items():
+        image_path = os.path.join(visualizations_out_dir, f"{page_id}.jpg")
+        img.save(image_path)  
+    markdown_path = os.path.join(markdowns_out_dir, f"{page_id}.md")
+    markdown = to_markdown(tags)
+    with open(markdown_path, "w", encoding="utf-8") as f:
+        f.write(markdown)
+    sample_image.save(new_img_path)
     converted.append(page_obj)
     
-    html_path = os.path.join(html_out_dir, f"{doc.name}.html")
+    html_path = os.path.join(html_out_dir, f"{page_id}.html")
     with open(html_path, "w", encoding="utf-8") as f:
         f.write(sample_html)
         
-    doctag_path = os.path.join(doctags_out_dir, f"{doc.name}.json")
+    doctag_path = os.path.join(doctags_out_dir, f"{page_id}.json")
     with open(doctag_path, "w", encoding="utf-8") as f:
         json.dump(tags, f, indent=2, ensure_ascii=False)
 

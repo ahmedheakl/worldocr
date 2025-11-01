@@ -19,7 +19,7 @@ end2end_eval:
   dataset:
     dataset_name: end2end_dataset
     ground_truth:
-      data_path: ../data/omnidocbench_output_med/cleaned_omnidocbench.json
+      data_path: ../data/omnidocbench_output_med/omnidocbench_cleaned_v2.json
     prediction:
       data_path: ../data/predictions_med/qwen25vl-3b-comp-v1
     match_method: quick_match

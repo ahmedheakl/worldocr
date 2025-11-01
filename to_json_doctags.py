@@ -407,18 +407,20 @@ def extract_figures_and_captions(soup: BeautifulSoup, b: Builder):
             continue
         bbox = extract_bbox_from_tag(fig)
         pic_idx = b.add_picture(bbox)
-        element_range = 1 # how many elements previous or following to search for a caption
-        prev_cap = fig.find_previous("figure_caption")
-        following_cap = fig.find_next("figure_caption")
+        element_range = 3 # how many elements previous or following to search for a caption
+        prev_cap = fig.find_previous()
+        following_cap = fig.find_next()
         for _ in range(element_range):
-            if prev_cap and not already_processed(prev_cap):
+            while prev_cap and "loc_" in prev_cap.name: prev_cap = prev_cap.find_previous()
+            while following_cap and "loc_" in following_cap.name: following_cap = following_cap.find_next()
+            if prev_cap and prev_cap.name == "figure_caption" and not already_processed(prev_cap):
                 cap_text = text_of(prev_cap)
                 cap_bbox = extract_bbox_from_tag(prev_cap)
                 cap_idx = b.add_text("caption", cap_text, b._picture_ref(pic_idx), bbox=cap_bbox)
                 b.link_picture_caption(pic_idx, cap_idx)
                 mark_processed(prev_cap)
                 break
-            if following_cap and not already_processed(following_cap):
+            if following_cap and following_cap.name == "figure_caption" and not already_processed(following_cap):
                 cap_text = text_of(following_cap)
                 cap_bbox = extract_bbox_from_tag(following_cap)
                 cap_idx = b.add_text("caption", cap_text, b._picture_ref(pic_idx), bbox=cap_bbox)
@@ -426,49 +428,17 @@ def extract_figures_and_captions(soup: BeautifulSoup, b: Builder):
                 mark_processed(following_cap)
                 break
             if prev_cap:
-                prev_cap = prev_cap.find_previous("figure_caption")
+                prev_cap = prev_cap.find_previous()
             if following_cap:
-                following_cap = following_cap.find_next("figure_caption")
+                following_cap = following_cap.find_next()
         mark_processed(fig)
 
-    # Standalone <figure_caption> (rare): attach to the last picture if exists
     for cap in soup.find_all("figure_caption"):
         if already_processed(cap):
             continue
-        elements_range = 2
         cap_text = text_of(cap)
-        prev_figure = cap.find_previous("figure")
-        following_figure = cap.find_next("figure")
-        last_pic = -1
-        for _ in range(elements_range):
-            if prev_figure and not already_processed(prev_figure):
-                cur_bbox = extract_bbox_from_tag(prev_figure)['bbox']
-                last_pic = None
-                for pi, pnode in enumerate(b.pictures):
-                    if pnode["prov"] and pnode["prov"][0]["bbox"] == cur_bbox:
-                        last_pic = pi
-                        break
-                if last_pic is not None:
-                    break
-            if following_figure and not already_processed(following_figure):
-                cur_bbox = extract_bbox_from_tag(following_figure)['bbox']
-                last_pic = None
-                for pi, pnode in enumerate(b.pictures):
-                    if pnode["prov"] and pnode["prov"][0]["bbox"] == cur_bbox:
-                        last_pic = pi
-                        break
-                if last_pic is not None:
-                    break
-            if prev_figure:
-                prev_figure = prev_figure.find_previous("figure")
-            if following_figure:
-                following_figure = following_figure.find_next("figure")
         cap_bbox = extract_bbox_from_tag(cap)
-        if last_pic >= 0:
-            cap_idx = b.add_text("caption", cap_text, b._picture_ref(last_pic), bbox=cap_bbox)
-            b.link_picture_caption(last_pic, cap_idx)
-        else:
-            b.add_text("caption", cap_text, {"$ref": "#/body"}, bbox=cap_bbox)
+        b.add_text("text", cap_text, {"$ref": "#/body"}, bbox=cap_bbox)
         mark_processed(cap)
 
 def extract_table_captions_in_order(soup: BeautifulSoup, b: Builder):
@@ -482,9 +452,11 @@ def extract_table_captions_in_order(soup: BeautifulSoup, b: Builder):
         cap_bbox = extract_bbox_from_tag(cap)
         elements_range = 2 # how many elements previous or following to search for a table
         target_idx = None
-        prev_tbl = cap.find_previous("table")
-        following_tbl = cap.find_next("table")
+        prev_tbl = cap.find_previous()
+        following_tbl = cap.find_next()
         for _ in range(elements_range):
+            while prev_tbl and ("loc_" in prev_tbl.name or is_leaf_table(prev_tbl)): prev_tbl = prev_tbl.find_previous()
+            while following_tbl and ("loc_" in following_tbl.name or is_leaf_table(following_tbl)): following_tbl = following_tbl.find_next()
             if prev_tbl and not is_leaf_table(prev_tbl):
                 cur_bbox = extract_bbox_from_tag(prev_tbl)['bbox']
                 for ti, tnode in enumerate(b.tables):
@@ -502,14 +474,14 @@ def extract_table_captions_in_order(soup: BeautifulSoup, b: Builder):
                 if target_idx is not None:
                     break
             if prev_tbl:
-                prev_tbl = prev_tbl.find_previous("table")
+                prev_tbl = prev_tbl.find_previous()
             if following_tbl:
-                following_tbl = following_tbl.find_next("table")
+                following_tbl = following_tbl.find_next()
         if target_idx is not None:
             cap_idx = b.add_text("caption", cap_text, b._table_ref(target_idx), bbox=cap_bbox)
             b.link_table_caption(target_idx, cap_idx)
         else:
-            b.add_text("caption", cap_text, {"$ref": "#/body"}, bbox=cap_bbox)
+            b.add_text("text", cap_text, {"$ref": "#/body"}, bbox=cap_bbox)
 
         mark_processed(cap)
 
@@ -633,7 +605,7 @@ def _compute_body_children_in_dom_order(soup: BeautifulSoup, b: Builder) -> List
     # Which DOM nodes should drive body order?
     def _is_interesting(node: Tag) -> bool:
         if not isinstance(node, Tag): return False
-        if node.name in {"table", "figure", "list", "toc", "text", "quote", "equation", "title", "header", "footer", 'list-item'}:
+        if node.name in {"table", "figure", "list", "toc", "text", "quote", "equation", "title", "header", "footer", 'list-item', 'figure_caption', 'table_caption'}:
             return True
         # dynamic section headers: section_header_level_N
         return level_from_header_tag(node.name or "") is not None
@@ -676,14 +648,14 @@ def _compute_body_children_in_dom_order(soup: BeautifulSoup, b: Builder) -> List
                 _push_ref(b._text_ref(tid))
 
         elif node.name in {"quote"}:
-            for tid in _find_texts_by_bbox_and_labels(bbox, labels={"quote"}):
+            for tid in _find_texts_by_bbox_and_labels(bbox, labels={"quote", "text"}):
                 _push_ref(b._text_ref(tid))
 
         elif node.name in {"equation"}:
-            for tid in _find_texts_by_bbox_and_labels(bbox, labels={"equation"}):
+            for tid in _find_texts_by_bbox_and_labels(bbox, labels={"equation", "formula"}):
                 _push_ref(b._text_ref(tid))
 
-        elif node.name in {"text"}:
+        elif node.name in {"text", 'figure_caption', 'table_caption'}:
             for tid in _find_texts_by_bbox_and_labels(bbox, labels={"text"}):
                 _push_ref(b._text_ref(tid))
 
