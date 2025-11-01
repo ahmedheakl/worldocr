@@ -4,7 +4,7 @@ import os
 import json
 from tqdm import tqdm
 
-img_folder = '../data/omnidocbench_output_mega'
+img_folder = '../data/omnidocbench_output_top'
 out_folder = f'{img_folder}/omnidoc_viz'
 os.makedirs(out_folder, exist_ok=True)
     

@@ -664,6 +664,24 @@ def _compute_body_children_in_dom_order(soup: BeautifulSoup, b: Builder) -> List
 
     return body_children
 
+def filter_tags(tags):
+    to_remove = []
+    for ref_id in tags['body']['children']:
+        for element in tags['texts']:
+            if element['self_ref'] != ref_id: continue
+            if element['label'] != 'caption': continue
+            cur_text = element['text']
+            for text_element in tags['texts']:
+                if cur_text in text_element['text']: to_remove.append(ref_id); break
+            break
+        
+    tags['body']['children'] = [cid for cid in tags['body']['children'] if cid not in to_remove]
+    tags['texts'] = [t for t in tags['texts'] if t['self_ref'] not in to_remove]
+    for table in tags['tables']:
+        table['children'] = [cid for cid in table['children'] if cid not in to_remove]
+    for picture in tags['pictures']:
+        picture['children'] = [cid for cid in picture['children'] if cid not in to_remove]
+    return tags
 
 def parse_doctag_to_docling(doc_html: str, img_meta_in: Optional[Dict[str, Any]], row_idx: int) -> Dict[str, Any]:
     s = unescape_and_clean(doc_html)
@@ -728,7 +746,9 @@ def parse_doctag_to_docling(doc_html: str, img_meta_in: Optional[Dict[str, Any]]
             "1": { "size": {"width": w, "height": h}, "page_no": 1 }
         }
     }
+    doc = filter_tags(doc)
     return doc
+
 
 
 

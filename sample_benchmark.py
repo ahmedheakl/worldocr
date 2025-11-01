@@ -27,16 +27,16 @@ from check_layout import infer_quality
 # --------------------------------------------
 files = glob("data/train2/*.parquet")
 random.seed(42)
-files = random.sample(files, k=10)  
+files = random.sample(files, k=50)  
 # files = files[10:15]
 all_dfs = [pd.read_parquet(f) for f in tqdm(files, desc="Loading parquet files")]
 df = pd.concat(all_dfs, ignore_index=True)
-filter_langs = ["ru", "en", "pl", "es", "fr", "uk", "it", "sr", "hr", "bg", "ja", "cs", "ro", "de", "pt", "zh", "nl", "vi", "el", "hu", "tr"]
+# filter_langs = ["ru", "en", "pl", "es", "fr", "uk", "it", "sr", "hr", "bg", "ja", "cs", "ro", "de", "pt", "zh", "nl", "vi", "el", "hu", "tr"]
 del all_dfs
-df = df[df['language'].isin(filter_langs)].reset_index(drop=True)
-# df = df[df['doctag_html'].str.contains("caption", na=False)].reset_index(drop=True)
+# df = df[df['language'].isin(filter_langs)].reset_index(drop=True)
+df = df[df['doctag_html'].str.contains("<equation>", na=False)].reset_index(drop=True)
 # df = df[df['id'].str.contains("doc_253edfcda9b18f792bd63a9ec22d9e98775fbba6_p00005")].reset_index(drop=True)
-output_dir = "data/omnidocbench_output_mega"
+output_dir = "data/omnidocbench_output_top"
 os.makedirs(output_dir, exist_ok=True) 
 images_out_dir = os.path.join(output_dir, "images")
 os.makedirs(images_out_dir, exist_ok=True)
@@ -305,7 +305,7 @@ def get_list(element, order, annot_id, attributes):
     return items, order_update, annot_id_update, full_text.strip(), list_ploy
 
 
-def curate_block(category, poly, text, order, anno_id, attributes, merge_list=[], html=""):
+def curate_block(category, poly, text, order, anno_id, attributes, merge_list=[], html="", latex=""):
     block = {
         "category_type": category,
         "poly": poly,
@@ -320,6 +320,8 @@ def curate_block(category, poly, text, order, anno_id, attributes, merge_list=[]
         block["text"] = text
     if html:
         block["html"] = html
+    if latex:
+        block["latex"] = latex
     if category in ["figure"]:
         del block["line_with_spans"], block['attribute'], block['merge_list']
         if text: del block['text']
@@ -337,7 +339,7 @@ def parse_doctag(html_str, start_order=0, start_id=0, language="unknown"):
     # Parse doctag XML
     soup = BeautifulSoup(html_str, "html.parser")
     target_elements = [f"section_header_level_{level}" for level in range(1, 10)]
-    target_elements += ["text", "picture", "page_footer", "page_header", "unordered_list", "title", "otsl"]
+    target_elements += ["text", "picture", "page_footer", "page_header", "unordered_list", "title", "otsl", "formula"]
     for element in soup.find_all(target_elements):
         if "loc_" in element.name: continue
         raw = str(element)
@@ -368,10 +370,13 @@ def parse_doctag(html_str, start_order=0, start_id=0, language="unknown"):
             category = "figure"
         elif element.name in ["table", "otsl"]:
             category = "table"
+        elif element.name == "formula":
+            category = "equation_isolated"
         else:
             category = "text_block"
 
-        text = inner if category not in ["table"] else ""
+        text = inner if category not in ["table", "equation_isolated"] else ""
+        latex = inner if category == "equation_isolated" else ""
         html = ""
         add_later = False
         caption_data = None
@@ -417,7 +422,8 @@ def parse_doctag(html_str, start_order=0, start_id=0, language="unknown"):
             anno_id,
             attributes,
             merge_list,
-            html
+            html,
+            latex
         )
         layout_dets.append(block)
         order += order_update
@@ -480,34 +486,12 @@ def convert_page(page_number, img_size, img_path, html_doc, language):
     }
 
 
-def filter_tags(tags):
-    to_remove = []
-    for ref_id in tags['body']['children']:
-        for element in tags['texts']:
-            if element['self_ref'] != ref_id: continue
-            if element['label'] != 'caption': continue
-            cur_text = element['text']
-            for text_element in tags['texts']:
-                if cur_text in text_element['text']: to_remove.append(ref_id); break
-            break
-        
-    tags['body']['children'] = [cid for cid in tags['body']['children'] if cid not in to_remove]
-    tags['texts'] = [t for t in tags['texts'] if t['self_ref'] not in to_remove]
-    for table in tags['tables']:
-        table['children'] = [cid for cid in table['children'] if cid not in to_remove]
-    for picture in tags['pictures']:
-        picture['children'] = [cid for cid in picture['children'] if cid not in to_remove]
-    return tags
-            
-
 converted = []
 for i, d in enumerate(tqdm(benchmark_samples.to_dict(orient="records"))):
     page_id = d['id']
     sample_image = d['image']
     sample_html = d['doctag_html']
     sample_lang = d['language']
-    if sample_lang not in filter_langs:
-        continue
     img_bytes = sample_image.get("bytes")
     image = Image.open(BytesIO(bytes(img_bytes))).convert("RGB")
     image_meta_data = {
@@ -517,7 +501,7 @@ for i, d in enumerate(tqdm(benchmark_samples.to_dict(orient="records"))):
         "height": image.height
     }
     tags = parse_doctag_to_docling(sample_html, image_meta_data, i)
-    tags = filter_tags(tags)
+    if len(tags['texts']) > 0 and all(t['text'].strip() == "" for t in tags['texts']): continue
     doc = DoclingDocument.model_validate(tags)
     def pil_image_to_data_uri(image: Image.Image, format: str = "JPEG") -> str:
         """Convert a PIL Image to a data URI."""
@@ -549,12 +533,6 @@ for i, d in enumerate(tqdm(benchmark_samples.to_dict(orient="records"))):
     new_img_path = os.path.join(images_out_dir, f"{page_id}.jpg")
     img_path = os.path.relpath(new_img_path, output_dir)
     page_obj = convert_page(page_number, (sample_image.width, sample_image.height), img_path, html, sample_lang)
-    all_texts_empty = all(
-        (anno['category_type'] in ['text_block', 'title', 'header', 'footer'] and not anno.get('text', '').strip()) or 
-        (anno['category_type'] == 'table' and not anno.get('html', '').strip()) for anno in page_obj['layout_dets'])
-    if all_texts_empty:
-        print(f"❌ Error in page {page_id}: no text or latex.")
-        continue
     for i, img in imgs_by_page.items():
         image_path = os.path.join(visualizations_out_dir, f"{page_id}.jpg")
         img.save(image_path)  

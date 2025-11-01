@@ -46,7 +46,7 @@ Please strictly follow these guidelines to ensure accuracy and consistency in th
 data_root = "../data/train2"
 files = glob(f"{data_root}/*.parquet")
 # import random
-# files = random.sample(files, k=10)
+# files = random.sample(files, k=5)
 
 out_root = "data"
 parser = ArgumentParser()
@@ -78,7 +78,7 @@ def curate_sample(rel_image_path, content, prompt=DOCTAGS_PROMPT):
 
 data = []
 append = data.append  # micro-opt
-
+filter_langs = ["ru", "en", "pl", "es", "fr", "uk", "it", "sr", "hr", "bg", "ja", "cs", "ro", "de", "pt", "zh", "nl", "vi", "el", "hu", "tr"]
 
 num_samples_per_language = {}
 all_dfs = []
@@ -87,6 +87,7 @@ for file in tqdm(files, desc="Loading Parquet files"):
     all_dfs.append(df)
 df = pd.concat(all_dfs, ignore_index=True)
 del all_dfs
+df = df[df['language'].isin(filter_langs)].reset_index(drop=True)
 df = df.sample(frac=1, random_state=42).reset_index(drop=True)
 
 def pil_image_to_data_uri(image: Image.Image, format: str = "JPEG") -> str:
@@ -104,9 +105,6 @@ for row in tqdm(df.itertuples(index=False, name="Row"), desc=f"Building ...", to
     page_image = getattr(row, "image")
     doctag_html = getattr(row, "doctag_html")
     language = getattr(row, "language")
-    
-    if language not in ['en', 'fr', 'de', 'es', 'it', 'pt', 'ar', 'he']:
-        continue
     
     if language not in num_samples_per_language:
         num_samples_per_language[language] = 0
@@ -139,13 +137,14 @@ for row in tqdm(df.itertuples(index=False, name="Row"), desc=f"Building ...", to
             }
 
             doc_dict = parse_doctag_to_docling(doctag_html, image_meta_data, page_id)
+            if len(doc_dict['texts']) > 0 and all(t['text'].strip() == "" for t in doc_dict['texts']): continue
             if infer_quality(image, doc_dict) < 0.9: continue
             doc = DoclingDocument.model_validate(doc_dict)
             if args.format == "markdown":
                 tags = to_markdown(doc_dict)
                 prompt = MARKDOWN_PROMPT
             else:
-                tags = doc.export_to_doctags()
+                tags = doc.export_to_doctags(xsize=image.width, ysize=image.height)
                 prompt = DOCTAGS_PROMPT
             with open(image_path, "wb") as img_f:
                 img_f.write(img_bytes)
