@@ -77,7 +77,7 @@ class DotsOCRParser:
             protocol='http',
             ip='localhost',
             port=8000,
-            model_name='model',
+            model_name='rednote-hilab/dots.ocr',
             temperature=0.1,
             top_p=1.0,
             max_completion_tokens=16384,

@@ -102,7 +102,7 @@ PYTHONPATH=.. python tools/model_infer/Dolphin_img2md.py \
 
 # 9. DotsOCR
 NAME=dotsocr
-torchrun --nproc_per_node=2 dotsocr_dp.py \
+python dotsocr_md.py \
     --filepath $FILE_PATH \
     --output_dir $OUTROOT/$NAME
 

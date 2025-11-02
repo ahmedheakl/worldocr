@@ -1,4 +1,3 @@
-
 import os
 os.environ['PYTORCH_CUDA_ALLOC_CONF'] = 'expandable_segments:True'
 from tqdm import tqdm
@@ -6,6 +5,7 @@ import json
 import argparse
 import shutil
 from dots_ocr import DotsOCRParser
+import multiprocessing as mp
 
 
 def download():
@@ -27,12 +27,12 @@ if __name__=="__main__":
         metavar=('x1', 'y1', 'x2', 'y2'),
         help='should give this argument if you want to prompt_grounding_ocr'
     )
-    parser.add_argument("--model_name", type=str, default="model")
+    parser.add_argument("--model_name", type=str, default="rednote-hilab/dots.ocr")
     parser.add_argument("--temperature", type=float, default=0.1)
     parser.add_argument("--top_p", type=float, default=1.0)
     parser.add_argument("--dpi", type=int, default=200)
     parser.add_argument("--max_completion_tokens", type=int, default=16384)
-    parser.add_argument("--num_thread", type=int, default=128)
+    parser.add_argument("--num_thread", type=int, default=16)
     parser.add_argument("--min_pixels", type=int, default=None)
     parser.add_argument("--max_pixels", type=int, default=None)
     parser.add_argument("--output_dir", type=str, default="./output_omni/")
@@ -47,40 +47,31 @@ if __name__=="__main__":
         dpi=args.dpi,
         min_pixels=args.min_pixels,
         max_pixels=args.max_pixels,
-        use_hf=True,
     )
 
     with open(args.filepath, 'r') as f:
         list_items = json.load(f)
 
-    results = []
     output_path = "./output/output_omni.jsonl"
-    f_out = open(output_path, 'w')
     root_dir = os.path.dirname(args.filepath)
-    tasks = [[os.path.join(root_dir, item['page_info']['image_path']), f_out] for item in list_items]
+    tasks = [os.path.join(root_dir, item['page_info']['image_path']) for item in list_items]
 
-    def _excute(task):
-        import torch
-        import gc
-        image_path, f_out = task
+    def _excute(image_path):
         result = dots_ocr_parser.parse_file(
-                image_path, 
-                prompt_mode="prompt_layout_all_en",
-                # prompt_mode="prompt_ocr",
-                fitz_preprocess=True,
-            )
-        results.append(result)
-        f_out.write(f"{json.dumps(result, ensure_ascii=False)}\n")
-        f_out.flush()
-        if torch.cuda.is_available():
-            torch.cuda.empty_cache()
-            torch.cuda.synchronize()
-        gc.collect()
+            image_path, 
+            prompt_mode="prompt_layout_all_en",
+            # prompt_mode="prompt_ocr",
+            fitz_preprocess=True,
+        )
+        return result
 
-    for task in tqdm(tasks):
-        _excute(task)
+    with mp.Pool(processes=args.num_thread) as pool:
+        results = list(tqdm(pool.imap(_excute, tasks), total=len(tasks)))
+    
+    with open(output_path, 'w') as f_out:
+        for result in results:
+            f_out.write(f"{json.dumps(result, ensure_ascii=False)}\n")
      
-    f_out.close()
     os.makedirs(args.output_dir, exist_ok=True)
     with open(output_path, "r") as f:
         for line in f.readlines():
