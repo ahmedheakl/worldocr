@@ -2,10 +2,11 @@
 __pycache__/
 *.py[codz]
 *$py.class
-data
+/data/
 setup.sh
 checkpoints
 logs
+LLaMA-Factory/data
 
 # C extensions
 *.so

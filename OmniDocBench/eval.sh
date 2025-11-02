@@ -30,7 +30,7 @@ PYTHONPATH=.. python tools/model_infer/granite_docling.py \
 
 # 3. NanosetsOCR
 NAME=nanosetsocr
-LOG_FILE="vllm_$(date +'%Y%m%d_%H%M%S').log"
+LOG_FILE="vllm_nanosets_$(date +'%Y%m%d_%H%M%S').log"
 vllm serve nanonets/Nanonets-OCR-s \
     --gpu-memory-utilization 0.8 \
     --max-model-len 15000 \
@@ -66,6 +66,10 @@ PYTHONPATH=.. python tools/model_infer/nanosets_vllm.py \
     --model_path "$MODEL_PATH" \
     --input_dir "$INPUT_DIR" \
     --output_dir "$OUTROOT/$NAME"   
+echo "Stopping vLLM..."
+kill $VLLM_PID
+wait $VLLM_PID 2>/dev/null || true
+echo "vLLM stopped."
 
 # 5. Qwen2.5-VL-3B-Instruct
 NAME=qwen25vl3b
@@ -114,3 +118,29 @@ NAME=deepseekocr
 python deepseekocr_vllm.py \
     --input_dir $INPUT_DIR \
     --output_dir $OUTROOT/$NAME
+
+
+# 12. chandra
+NAME=chandra
+LOG_FILE="vllm_chandra_$(date +'%Y%m%d_%H%M%S').log"
+NUM_VISIBLE_GPUS=$(echo $CUDA_VISIBLE_DEVICES | tr ',' '\n' | wc -l)
+vllm serve datalab-to/chandra \
+    --max-model-len 16384 \
+    --gpu-memory-utilization 0.9 \
+    --dtype bfloat16 \
+    --served-model-name chandra \
+    --tensor-parallel-size $NUM_VISIBLE_GPUS > $LOG_FILE 2>&1 &
+
+VLLM_PID=$!
+echo "Waiting for vLLM server to start..."
+until curl -s http://localhost:8000/v1/models > /dev/null 2>&1; do
+    sleep 1
+done
+echo "vLLM server started."
+python tools/model_infer/chandra_md.py \
+    --input_dir "$INPUT_DIR" \
+    --output_dir "$OUTROOT/$NAME" 
+echo "Stopping vLLM..."
+kill $VLLM_PID
+wait $VLLM_PID 2>/dev/null || true
+echo "vLLM stopped."

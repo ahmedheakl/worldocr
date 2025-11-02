@@ -1,6 +1,6 @@
 import json, csv, math, sys
 
-path = "result/gpt4o_quick_match_metric_result.json"
+path = "result/deepseekocr_quick_match_metric_result.json"
 
 with open(path, "r", encoding="utf-8") as f:
     data = json.load(f)

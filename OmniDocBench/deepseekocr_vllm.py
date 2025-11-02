@@ -102,14 +102,11 @@ if __name__ == "__main__":
     for output, image in zip(outputs_list, img_paths):
         image = str(image)
         content = output.outputs[0].text
-        mmd_det_path = args.output_dir + image.split('/')[-1].replace('.jpg', '_det.md')
-        with open(mmd_det_path, 'w', encoding='utf-8') as afile:
-            afile.write(content)
         content = clean_formula(content)
         matches_ref, mathes_other = re_match(content)
         for idx, a_match_other in enumerate(tqdm(mathes_other, desc="other")):
             content = content.replace(a_match_other, '').replace('\n\n\n\n', '\n\n').replace('\n\n\n', '\n\n').replace('<center>', '').replace('</center>', '')
-        mmd_path = args.output_dir + image.split('/')[-1].replace('.jpg', '.md')
+        mmd_path = os.path.join(args.output_dir, os.path.basename(image).replace('.jpg', '.md'))
         with open(mmd_path, 'w', encoding='utf-8') as afile:
             afile.write(content)
 
