@@ -6,12 +6,12 @@ from openai import AsyncOpenAI
 import base64
 from tqdm import tqdm
 
-async def ocr_page_with_nanonets_s(client, image_path):
+async def ocr_page_with_nanonets_s(client, image_path, model_path):
     with open(image_path, "rb") as image_file:
         img_base64 = base64.b64encode(image_file.read()).decode("utf-8")
     
     response = await client.chat.completions.create(
-        model="nanonets/Nanonets-OCR-s",
+        model=model_path,
         messages=[
             {
                 "role": "user",
@@ -32,10 +32,10 @@ async def ocr_page_with_nanonets_s(client, image_path):
     )
     return response.choices[0].message.content
 
-async def process_batch(client, batch, output_folder):
+async def process_batch(client, batch, output_folder, model_path):
     tasks = []
     for filename, image_path in batch:
-        tasks.append(ocr_page_with_nanonets_s(client, image_path))
+        tasks.append(ocr_page_with_nanonets_s(client, image_path, model_path))
     
     results = await asyncio.gather(*tasks, return_exceptions=True)
     
@@ -53,7 +53,7 @@ async def process_batch(client, batch, output_folder):
         except Exception as e:
             print(f"Error saving {filename}: {str(e)}")
 
-async def process_folder(input_folder, output_folder, batch_size=8):
+async def process_folder(input_folder, output_folder, batch_size, model_path):
     os.makedirs(output_folder, exist_ok=True)
     client = AsyncOpenAI(api_key="123", base_url="http://localhost:8000/v1")
     
@@ -66,13 +66,14 @@ async def process_folder(input_folder, output_folder, batch_size=8):
 
     for i in tqdm(range(0, len(image_files), batch_size)):
         batch = image_files[i:i + batch_size]
-        await process_batch(client, batch, output_folder)
+        await process_batch(client, batch, output_folder, model_path)
 
 parser = ArgumentParser()
+parser.add_argument("--model_path", type=str, default="nanonets/Nanonets-OCR-s")
 parser.add_argument("--input_dir", type=str, default="../data/omnidocbench_output_en/images")
 parser.add_argument("--output_dir", type=str, default="../data/predictions/nanosets")
 parser.add_argument("--batch_size", type=int, default=16, help="Number of images to process concurrently")
 args = parser.parse_args()
 
 os.makedirs(args.output_dir, exist_ok=True)
-asyncio.run(process_folder(args.input_dir, args.output_dir, args.batch_size))
+asyncio.run(process_folder(args.input_dir, args.output_dir, args.batch_size, args.model_path))

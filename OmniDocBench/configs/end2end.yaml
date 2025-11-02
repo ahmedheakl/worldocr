@@ -21,7 +21,7 @@ end2end_eval:
     ground_truth:
       data_path: ../data/omnidocbench_output_mega/omnidocbench.json
     prediction:
-      data_path: ../data/predictions_mega/smoldocling
+      data_path: ../data/predictions_mega/gpt4o
     match_method: quick_match
     # filter: 
     #   language: english

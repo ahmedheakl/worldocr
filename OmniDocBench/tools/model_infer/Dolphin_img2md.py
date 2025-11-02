@@ -11,8 +11,9 @@ import cv2
 import torch
 from PIL import Image
 from transformers import AutoProcessor, VisionEncoderDecoderModel
+from dolphine_utils import *
 
-from utils.utils import *
+
 
 
 class DOLPHIN:
@@ -40,15 +41,7 @@ class DOLPHIN:
         self.tokenizer = self.processor.tokenizer
         
     def chat(self, prompt, image):
-        """Process an image or batch of images with the given prompt(s)
-        
-        Args:
-            prompt: Text prompt or list of prompts to guide the model
-            image: PIL Image or list of PIL Images to process
-            
-        Returns:
-            Generated text or list of texts from the model
-        """
+        """Process an image or batch of images with the given prompt(s)"""
         # Check if we're dealing with a batch
         is_batch = isinstance(image, list)
         
@@ -63,7 +56,9 @@ class DOLPHIN:
         
         # Prepare image
         batch_inputs = self.processor(images, return_tensors="pt", padding=True)
-        batch_pixel_values = batch_inputs.pixel_values.half().to(self.device)
+        batch_pixel_values = batch_inputs.pixel_values.to(self.device)  # CHANGED: move to device first
+        if self.device == "cuda":  # ADD: only use half precision on CUDA
+            batch_pixel_values = batch_pixel_values.half()
         
         # Prepare prompt
         prompts = [f"<s>{p} <Answer/>" for p in prompts]
@@ -75,7 +70,7 @@ class DOLPHIN:
 
         batch_prompt_ids = batch_prompt_inputs.input_ids.to(self.device)
         batch_attention_mask = batch_prompt_inputs.attention_mask.to(self.device)
-        
+            
         # Generate text
         outputs = self.model.generate(
             pixel_values=batch_pixel_values,
@@ -96,6 +91,7 @@ class DOLPHIN:
         
         # Process output
         sequences = self.tokenizer.batch_decode(outputs.sequences, skip_special_tokens=False)
+        print(sequences)
         
         # Clean prompt text from output
         results = []
@@ -111,47 +107,9 @@ class DOLPHIN:
 
 def process_document(document_path, model, save_dir, max_batch_size=None):
     """Parse documents with two stages - Handles both images and PDFs"""
-    file_ext = os.path.splitext(document_path)[1].lower()
-    
-    if file_ext == '.pdf':
-        # Process PDF file
-        # Convert PDF to images
-        images = convert_pdf_to_images(document_path)
-        if not images:
-            raise Exception(f"Failed to convert PDF {document_path} to images")
-        
-        all_results = []
-        
-        # Process each page
-        for page_idx, pil_image in enumerate(images):
-            print(f"Processing page {page_idx + 1}/{len(images)}")
-            
-            # Generate output name for this page
-            base_name = os.path.splitext(os.path.basename(document_path))[0]
-            page_name = f"{base_name}_page_{page_idx + 1:03d}"
-            
-            # Process this page (don't save individual page results)
-            json_path, recognition_results = process_single_image(
-                pil_image, model, save_dir, page_name, max_batch_size, save_individual=False
-            )
-            
-            # Add page information to results
-            page_results = {
-                "page_number": page_idx + 1,
-                "elements": recognition_results
-            }
-            all_results.append(page_results)
-        
-        # Save combined results for multi-page PDF
-        combined_json_path = save_combined_pdf_results(all_results, document_path, save_dir)
-        
-        return combined_json_path, all_results
-    
-    else:
-        # Process regular image file
-        pil_image = Image.open(document_path).convert("RGB")
-        base_name = os.path.splitext(os.path.basename(document_path))[0]
-        return process_single_image(pil_image, model, save_dir, base_name, max_batch_size)
+    pil_image = Image.open(document_path).convert("RGB")
+    base_name = os.path.splitext(os.path.basename(document_path))[0]
+    return process_single_image(pil_image, model, save_dir, base_name, max_batch_size)
 
 
 def process_single_image(image, model, save_dir, image_name, max_batch_size=None, save_individual=True):
@@ -177,10 +135,8 @@ def process_single_image(image, model, save_dir, image_name, max_batch_size=None
 
     # Save outputs only if requested (skip for PDF pages)
     json_path = None
-    if save_individual:
-        # Create a dummy image path for save_outputs function
-        dummy_image_path = f"{image_name}.jpg"  # Extension doesn't matter, only basename is used
-        json_path = save_outputs(recognition_results, dummy_image_path, save_dir)
+    dummy_image_path = f"{image_name}.jpg" 
+    json_path = save_outputs(recognition_results, dummy_image_path, save_dir)
 
     return json_path, recognition_results
 
@@ -298,10 +254,10 @@ def process_element_batch(elements, model, prompt, max_batch_size=None):
 
 def main():
     parser = argparse.ArgumentParser(description="Document parsing based on DOLPHIN")
-    parser.add_argument("--model_path", default="./hf_model", help="Path to Hugging Face model")
-    parser.add_argument("--input_path", type=str, default="./demo", help="Path to input image/PDF or directory of files")
+    parser.add_argument("--model_path", default="ByteDance/Dolphin", help="Path to Hugging Face model")
+    parser.add_argument("--input_dir", type=str, default="./demo", help="Path to input image/PDF or directory of files")
     parser.add_argument(
-        "--save_dir",
+        "--output_dir",
         type=str,
         default=None,
         help="Directory to save parsing results (default: same as input directory)",
@@ -318,30 +274,28 @@ def main():
     model = DOLPHIN(args.model_path)
 
     # Collect Document Files (images and PDFs)
-    if os.path.isdir(args.input_path):
+    if os.path.isdir(args.input_dir):
         # Support both image and PDF files
         file_extensions = [".jpg", ".jpeg", ".png", ".JPG", ".JPEG", ".PNG", ".pdf", ".PDF"]
         
         document_files = []
         for ext in file_extensions:
-            document_files.extend(glob.glob(os.path.join(args.input_path, f"*{ext}")))
+            document_files.extend(glob.glob(os.path.join(args.input_dir, f"*{ext}")))
         document_files = sorted(document_files)
     else:
-        if not os.path.exists(args.input_path):
-            raise FileNotFoundError(f"Input path {args.input_path} does not exist")
+        if not os.path.exists(args.input_dir):
+            raise FileNotFoundError(f"Input path {args.input_dir} does not exist")
         
         # Check if it's a supported file type
-        file_ext = os.path.splitext(args.input_path)[1].lower()
+        file_ext = os.path.splitext(args.input_dir)[1].lower()
         supported_exts = ['.jpg', '.jpeg', '.png', '.pdf']
         
         if file_ext not in supported_exts:
             raise ValueError(f"Unsupported file type: {file_ext}. Supported types: {supported_exts}")
         
-        document_files = [args.input_path]
+        document_files = [args.input_dir]
 
-    save_dir = args.save_dir or (
-        args.input_path if os.path.isdir(args.input_path) else os.path.dirname(args.input_path)
-    )
+    save_dir = args.output_dir
     setup_output_dirs(save_dir)
 
     total_samples = len(document_files)

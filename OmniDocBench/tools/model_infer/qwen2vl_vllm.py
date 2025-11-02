@@ -3,27 +3,31 @@ from transformers import AutoProcessor
 from vllm import LLM, SamplingParams
 from tqdm import tqdm
 from pathlib import Path
+from argparse import ArgumentParser 
+import torch
+
+parser = ArgumentParser()
+parser.add_argument("--input_dir", type=str, default="../data/omnidocbench_output_med/cleaned_images")
+parser.add_argument("--output_dir", type=str, default="../data/predictions_med/qwen25vl-3b-comp-v1")
+parser.add_argument("--model_path", type=str, default="Qwen/Qwen2.5-VL-3B-Instruct")
+args = parser.parse_args()
 
 # ------------ Paths ------------
-input_dir = Path('../data/omnidocbench_output_med/cleaned_images')
-output_dir = Path('../data/predictions_med/qwen25vl-3b-comp-v1')
+input_dir = Path(args.input_dir)
+output_dir = Path(args.output_dir)
 output_dir.mkdir(parents=True, exist_ok=True)
-import torch
 num_devices = torch.cuda.device_count() if torch.cuda.is_available() else 1
 print("="*15, f"Using {num_devices} device(s) for inference.", "="*15)
 # ------------ Model ------------
-# MODEL_NAME = "Qwen/Qwen3-VL-2B-Instruct"
-MODEL_NAME = "../checkpoints/qwen25vl-3b-comp-v1/merged_model"
-# MODEL_NAME = "Qwen/Qwen2.5-VL-3B-Instruct"
 max_len=8196
 llm = LLM(
-    model=MODEL_NAME,
+    model=args.model_path,
     tensor_parallel_size=num_devices,
     trust_remote_code=True,   # Qwen uses custom processors/templates
-    gpu_memory_utilization=0.9,  # tweak if OOM
+    gpu_memory_utilization=0.7,  # tweak if OOM
     max_model_len=max_len,
 )
-processor = AutoProcessor.from_pretrained(MODEL_NAME, trust_remote_code=True)
+processor = AutoProcessor.from_pretrained(args.model_path, trust_remote_code=True)
 sampling_params = SamplingParams(
     max_tokens=max_len,        # adjust to avoid OOM
     temperature=0.0,        # deterministic
@@ -104,6 +108,11 @@ for i in range(0, len(img_paths), batch_size):
         doctags = output.outputs[0].text
         md_path = output_dir / f"{stem}.md"
         doctags = doctags.replace("<think>", "").replace("</think>", "").strip()
+        # remove ```markdown and ``` if present
+        if doctags.startswith("```markdown"):
+            doctags = doctags[len("```markdown"):].strip()
+        if doctags.endswith("```"):
+            doctags = doctags[:-len("```")].strip()
         with open(md_path, "w", encoding="utf-8") as f:
             f.write(doctags)
 

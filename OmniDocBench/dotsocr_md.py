@@ -18,14 +18,8 @@ def download():
 
 if __name__=="__main__":
     
-    parser = argparse.ArgumentParser(
-        description="dots.ocr Multilingual Document Layout Parser",
-    )
-    parser.add_argument(
-        "--filepath",
-        type=str,
-        
-    )
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--filepath", type=str)
     parser.add_argument(
         '--bbox', 
         type=int, 
@@ -33,61 +27,24 @@ if __name__=="__main__":
         metavar=('x1', 'y1', 'x2', 'y2'),
         help='should give this argument if you want to prompt_grounding_ocr'
     )
-    parser.add_argument(
-        "--ip", type=str, default="localhost",
-        help=""
-    )
-    parser.add_argument(
-        "--port", type=int, default=8000,
-        help=""
-    )
-    parser.add_argument(
-        "--model_name", type=str, default="model",
-        help=""
-    )
-    parser.add_argument(
-        "--temperature", type=float, default=0.1,
-        help=""
-    )
-    parser.add_argument(
-        "--top_p", type=float, default=1.0,
-        help=""
-    )
-    parser.add_argument(
-        "--dpi", type=int, default=200,
-        help=""
-    )
-    parser.add_argument(
-        "--max_completion_tokens", type=int, default=16384,
-        help=""
-    )
-    parser.add_argument(
-        "--num_thread", type=int, default=128,
-        help=""
-    )
-    parser.add_argument(
-        "--min_pixels", type=int, default=None,
-        help=""
-    )
-    parser.add_argument(
-        "--max_pixels", type=int, default=None,
-        help=""
-    )
-    parser.add_argument(
-        "--eval_result_save_dir", type=str, default="./output_omni/",
-    )
+    parser.add_argument("--model_name", type=str, default="model")
+    parser.add_argument("--temperature", type=float, default=0.1)
+    parser.add_argument("--top_p", type=float, default=1.0)
+    parser.add_argument("--dpi", type=int, default=200)
+    parser.add_argument("--max_completion_tokens", type=int, default=16384)
+    parser.add_argument("--num_thread", type=int, default=128)
+    parser.add_argument("--min_pixels", type=int, default=None)
+    parser.add_argument("--max_pixels", type=int, default=None)
+    parser.add_argument("--output_dir", type=str, default="./output_omni/")
     args = parser.parse_args()
     download()
     dots_ocr_parser = DotsOCRParser(
-        ip=args.ip,
-        port=args.port,
         model_name=args.model_name,
         temperature=args.temperature,
         top_p=args.top_p,
         max_completion_tokens=args.max_completion_tokens,
         num_thread=args.num_thread,
         dpi=args.dpi,
-        # output_dir=args.output, 
         min_pixels=args.min_pixels,
         max_pixels=args.max_pixels,
         use_hf=True,
@@ -97,7 +54,7 @@ if __name__=="__main__":
         list_items = json.load(f)
 
     results = []
-    output_path = "./output_omni.jsonl"
+    output_path = "./output/output_omni.jsonl"
     f_out = open(output_path, 'w')
     root_dir = os.path.dirname(args.filepath)
     tasks = [[os.path.join(root_dir, item['page_info']['image_path']), f_out] for item in list_items]
@@ -123,19 +80,15 @@ if __name__=="__main__":
     for task in tqdm(tasks):
         _excute(task)
      
-
     f_out.close()
-
-    
-    os.makedirs(args.eval_result_save_dir, exist_ok=True)
-
+    os.makedirs(args.output_dir, exist_ok=True)
     with open(output_path, "r") as f:
         for line in f.readlines():
             item = json.loads(line)[0]
             if 'md_content_nohf_path' in item:
                 file_name = os.path.basename(item['md_content_nohf_path']).replace("_nohf", "")
-                shutil.copy2(item['md_content_nohf_path'], os.path.join(args.eval_result_save_dir, file_name))
+                shutil.copy2(item['md_content_nohf_path'], os.path.join(args.output_dir, file_name))
             else:
-                shutil.copy2(item['md_content_path'], args.eval_result_save_dir)
+                shutil.copy2(item['md_content_path'], args.output_dir)
 
-    print(f"md results saved to {args.eval_result_save_dir}")
+    print(f"md results saved to {args.output_dir}")
