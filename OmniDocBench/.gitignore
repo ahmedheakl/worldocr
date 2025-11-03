@@ -20,3 +20,4 @@ old_trace
 result*/
 *.tsv
 data/
+hf_model

@@ -96,9 +96,9 @@ PYTHONPATH=.. python tools/model_infer/mineru_md.py \
 # 8. Dolphin
 NAME=dolphin
 PYTHONPATH=.. python tools/model_infer/Dolphin_img2md.py \
-    --model_path "ByteDance/Dolphin" \
-    --input_dir $INPUT_DIR \
-    --output_dir $OUTROOT/$NAME
+    --model_path "./hf_model" \
+    --input_path $INPUT_DIR \
+    --save_dir $OUTROOT/$NAME
 
 # 9. DotsOCR
 NAME=dotsocr
